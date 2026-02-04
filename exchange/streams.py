@@ -105,7 +105,7 @@ class OrderbookStream:
         valid_depths = [1, 50, 200, 500]
         if depth not in valid_depths:
             raise ValueError(f"Orderbook depth must be one of {valid_depths}, got {depth}")
-        
+
         self.symbol = symbol
         self.depth = depth
         self.on_orderbook = on_orderbook

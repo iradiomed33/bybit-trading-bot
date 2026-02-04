@@ -42,6 +42,10 @@ class BybitRestClient:
         self._last_request_time = 0
         self._min_request_interval = 0.1  # 100ms между запросами
 
+        # Смещение времени для синхронизации с сервером
+        self._time_offset = 0
+        self._sync_server_time()
+
         logger.info(f"BybitRestClient initialized: {self.base_url}")
 
     def _generate_signature(self, params: str, timestamp: str) -> str:
@@ -76,6 +80,23 @@ class BybitRestClient:
             time.sleep(self._min_request_interval - elapsed)
         self._last_request_time = time.time()
 
+    def _sync_server_time(self):
+        """Синхронизация времени с сервером Bybit для правильной подписи"""
+        try:
+            response = self.session.get(f"{self.base_url}/v5/market/time")
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("retCode") == 0:
+                server_time = int(data.get("result", {}).get("timeNano", 0)) // 1_000_000
+                client_time = int(time.time() * 1000)
+                self._time_offset = server_time - client_time
+                logger.debug(f"Server time sync: offset={self._time_offset}ms")
+            else:
+                logger.warning("Failed to sync server time")
+        except Exception as e:
+            logger.warning(f"Failed to sync server time: {e}")
+
     def _request(
         self,
         method: str,
@@ -107,7 +128,8 @@ class BybitRestClient:
 
         # Если требуется подпись (приватные эндпоинты)
         if signed:
-            timestamp = str(int(time.time() * 1000))
+            # Используем синхронизированное время с сервером
+            timestamp = str(int(time.time() * 1000) + self._time_offset)
             recv_window = "5000"
 
             # Сортируем параметры для подписи

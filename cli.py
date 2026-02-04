@@ -49,8 +49,9 @@ def main():
         print("Usage: python cli.py <command>")
         print("Commands:")
         print("  health   - Check configuration and system health")
-        print("  market   - Test market data endpoints (instruments, kline, orderbook)")
-        print("  stream   - Test WebSocket streams (kline + orderbook)")
+        print("  market   - Test market data endpoints")
+        print("  stream   - Test WebSocket streams")
+        print("  state    - Test state recovery (requires API keys)")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -61,6 +62,8 @@ def main():
         sys.exit(market_data_test())
     elif command == "stream":
         sys.exit(stream_test())
+    elif command == "state":
+        sys.exit(state_recovery_test())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -153,7 +156,8 @@ def stream_test():
         close_price = kline_data.get("close", "N/A")
         volume = kline_data.get("volume", "N/A")
         logger.info(
-            f"[Kline #{kline_count[0]}] Close: {close_price}, Volume: {volume}, Confirmed: {confirm}"
+            f"[Kline #{kline_count[0]}] Close: {close_price}, "
+            f"Volume: {volume}, Confirmed: {confirm}"
         )
 
     def on_orderbook(orderbook):
@@ -167,7 +171,8 @@ def stream_test():
             best_ask = asks[0][0]
             spread = float(best_ask) - float(best_bid)
             logger.info(
-                f"[Orderbook #{orderbook_count[0]}] Best bid: {best_bid}, Best ask: {best_ask}, Spread: {spread:.2f}"
+                f"[Orderbook #{orderbook_count[0]}] Best bid: {best_bid}, "
+                f"Best ask: {best_ask}, Spread: {spread:.2f}"
             )
 
     try:
@@ -202,6 +207,53 @@ def stream_test():
 
     except Exception as e:
         logger.error(f"✗ Stream test failed: {e}", exc_info=True)
+        return 1
+
+
+def state_recovery_test():
+    """Тест восстановления состояния (требует API ключи)"""
+    logger.info("=== State Recovery Test Started ===")
+
+    # Проверяем наличие API ключей
+    if not Config.BYBIT_API_KEY or not Config.BYBIT_API_SECRET:
+        logger.error("API keys required for state recovery")
+        logger.info("Please set BYBIT_API_KEY and BYBIT_API_SECRET in .env file")
+        return 1
+
+    try:
+        from storage.database import Database
+        from exchange.account import AccountClient
+        from storage.state_recovery import StateRecovery
+
+        # Инициализация
+        testnet = Config.ENVIRONMENT == "testnet"
+        db = Database()
+        account_client = AccountClient(testnet=testnet)
+        recovery = StateRecovery(db, account_client)
+
+        # Восстановление состояния
+        result = recovery.recover_state(category="linear")
+
+        if result["success"]:
+            logger.info("✓ State recovery successful")
+            logger.info(f"  - Positions synced: {result['positions_synced']}")
+            logger.info(f"  - Orders synced: {result['orders_synced']}")
+
+            if result["discrepancies"]:
+                logger.warning("Discrepancies found:")
+                for disc in result["discrepancies"]:
+                    logger.warning(f"  - {disc}")
+            else:
+                logger.info("  - No discrepancies found")
+
+            logger.info("=== State Recovery Test Passed ===")
+            return 0
+        else:
+            logger.error("✗ State recovery failed")
+            return 1
+
+    except Exception as e:
+        logger.error(f"✗ State recovery test failed: {e}", exc_info=True)
         return 1
 
 
