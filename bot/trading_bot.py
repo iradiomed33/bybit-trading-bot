@@ -160,12 +160,59 @@ class TradingBot:
                 orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
                 orderflow_features = self.pipeline.calculate_orderflow_features(orderbook)
 
+            # Деривативные данные (Mark price, Index price, Open Interest, Funding)
+            derivatives_data = {}
+            try:
+                # Mark price (текущая за последнюю свечу)
+                mark_resp = self.market_client.get_mark_price_kline(
+                    self.symbol, interval="1", limit=1
+                )
+                if mark_resp.get("retCode") == 0:
+                    mark_list = mark_resp.get("result", {}).get("list", [])
+                    if mark_list:
+                        mark_price = float(mark_list[0][1])  # Close price
+                        derivatives_data["mark_price"] = mark_price
+
+                # Index price
+                index_resp = self.market_client.get_index_price_kline(
+                    self.symbol, interval="1", limit=1
+                )
+                if index_resp.get("retCode") == 0:
+                    index_list = index_resp.get("result", {}).get("list", [])
+                    if index_list:
+                        index_price = float(index_list[0][1])
+                        derivatives_data["index_price"] = index_price
+
+                # Open Interest
+                oi_resp = self.market_client.get_open_interest(
+                    self.symbol, interval="5min", limit=1
+                )
+                if oi_resp.get("retCode") == 0:
+                    oi_list = oi_resp.get("result", {}).get("openInterestList", [])
+                    if oi_list:
+                        oi_value = float(oi_list[0][1])
+                        derivatives_data["open_interest"] = oi_value
+                        # OI change (если есть предыдущая запись)
+                        derivatives_data["oi_change"] = 0  # Упрощение для первого запроса
+
+                # Funding Rate (последняя величина)
+                fr_resp = self.market_client.get_funding_rate_history(self.symbol, limit=1)
+                if fr_resp.get("retCode") == 0:
+                    fr_list = fr_resp.get("result", {}).get("list", [])
+                    if fr_list:
+                        funding_rate = float(fr_list[0][2])  # fundingRate field
+                        derivatives_data["funding_rate"] = funding_rate
+
+            except Exception as e:
+                logger.warning(f"Failed to fetch derivative data: {e}")
+
             self.circuit_breaker.update_data_timestamp()
 
             return {
                 "df": df,
                 "orderbook": orderbook,
                 "orderflow_features": orderflow_features,
+                "derivatives_data": derivatives_data,
             }
 
         except Exception as e:
@@ -188,8 +235,67 @@ class TradingBot:
             )
         else:
             # Live mode: реально открываем позицию
-            # TODO: Добавить полную логику размещения ордеров
-            logger.info("[LIVE] Opening position...")
+            try:
+                # Расчитаем размер позиции
+                qty = self.position_sizer.calculate_size(
+                    account_balance=self.account.get_balance(),
+                    entry_price=signal["entry_price"],
+                    stop_loss=signal["stop_loss"],
+                    risk_percent=0.02,  # 2% риска на сделку
+                )
+
+                if qty <= 0:
+                    logger.warning("Position size too small, skipping trade")
+                    return
+
+                # Проверяем риск-лимиты
+                if not self.risk_limits.check_limits(
+                    position_size=qty,
+                    entry_price=signal["entry_price"],
+                    daily_loss=0,  # TODO: получить из БД
+                    consecutive_losses=0,  # TODO: получить из circuit breaker
+                ):
+                    logger.warning("Trade rejected by risk limits")
+                    return
+
+                # Выставляем ордер
+                side = "Buy" if signal["signal"] == "long" else "Sell"
+                order_result = self.order_manager.create_order(
+                    category="linear",
+                    symbol=self.symbol,
+                    side=side,
+                    order_type="Market",
+                    qty=qty,
+                    order_link_id=f"bot_{int(time.time() * 1000)}",
+                )
+
+                if order_result.get("retCode") == 0:
+                    order_id = order_result.get("result", {}).get("orderId")
+                    logger.info(f"✓ Order placed: {order_id}")
+
+                    # Регистрируем позицию для сопровождения
+                    self.position_manager.register_position(
+                        symbol=self.symbol,
+                        side=side,
+                        entry_price=signal["entry_price"],
+                        size=qty,
+                        stop_loss=signal["stop_loss"],
+                        take_profit=signal.get("take_profit"),
+                    )
+
+                    # Сохраняем сигнал в БД
+                    self.db.save_signal(
+                        strategy=signal.get("strategy", "Unknown"),
+                        symbol=self.symbol,
+                        signal_type=signal["signal"],
+                        price=signal["entry_price"],
+                        metadata=signal,
+                    )
+                else:
+                    logger.error(f"Failed to place order: {order_result}")
+
+            except Exception as e:
+                logger.error(f"Error processing live signal: {e}", exc_info=True)
 
     def _update_metrics(self):
         """Обновить метрики и equity"""

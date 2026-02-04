@@ -233,3 +233,101 @@ class OrderbookStream:
         best_ask = min(self.asks.keys(), key=lambda x: float(x))
 
         return float(best_ask) - float(best_bid)
+
+
+class MarkPriceStream:
+    """
+    Подписка на mark price через WebSocket (деривативы).
+    """
+
+    def __init__(
+        self,
+        symbol: str,
+        on_mark_price: Callable[[Dict[Any, Any]], None],
+        testnet: bool = True,
+    ):
+        """
+        Args:
+            symbol: Символ
+            on_mark_price: Callback для обработки mark price
+            testnet: Использовать testnet
+        """
+        self.symbol = symbol
+        self.on_mark_price = on_mark_price
+
+        ws_url = Config.BYBIT_WS_PUBLIC_TESTNET if testnet else Config.BYBIT_WS_PUBLIC_MAINNET
+
+        self.client = BybitWebSocketClient(ws_url, self._handle_message)
+        logger.info(f"MarkPriceStream initialized: {symbol}")
+
+    def _handle_message(self, data: Dict[Any, Any]):
+        """Обработка входящих сообщений"""
+        topic = data.get("topic", "")
+
+        if not topic.startswith("markPrice"):
+            return
+
+        data_list = data.get("data", {})
+        if isinstance(data_list, dict):
+            self.on_mark_price(data_list)
+
+    def start(self):
+        """Запуск stream"""
+        self.client.start()
+        time.sleep(1)
+
+        topic = f"markPrice.{self.symbol}"
+        self.client.subscribe([topic])
+
+    def stop(self):
+        """Остановка stream"""
+        self.client.stop()
+
+
+class FundingRateStream:
+    """
+    Подписка на funding rate через WebSocket.
+    """
+
+    def __init__(
+        self,
+        symbol: str,
+        on_funding: Callable[[Dict[Any, Any]], None],
+        testnet: bool = True,
+    ):
+        """
+        Args:
+            symbol: Символ
+            on_funding: Callback для обработки funding rate
+            testnet: Использовать testnet
+        """
+        self.symbol = symbol
+        self.on_funding = on_funding
+
+        ws_url = Config.BYBIT_WS_PUBLIC_TESTNET if testnet else Config.BYBIT_WS_PUBLIC_MAINNET
+
+        self.client = BybitWebSocketClient(ws_url, self._handle_message)
+        logger.info(f"FundingRateStream initialized: {symbol}")
+
+    def _handle_message(self, data: Dict[Any, Any]):
+        """Обработка входящих сообщений"""
+        topic = data.get("topic", "")
+
+        if not topic.startswith("funding"):
+            return
+
+        data_list = data.get("data", {})
+        if isinstance(data_list, dict):
+            self.on_funding(data_list)
+
+    def start(self):
+        """Запуск stream"""
+        self.client.start()
+        time.sleep(1)
+
+        topic = f"funding.{self.symbol}"
+        self.client.subscribe([topic])
+
+    def stop(self):
+        """Остановка stream"""
+        self.client.stop()

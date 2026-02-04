@@ -1,6 +1,7 @@
 """
 Backtest diagnostics: почему нет сделок?
 """
+
 from logger import setup_logger
 
 logger = setup_logger(__name__)
