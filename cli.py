@@ -53,6 +53,7 @@ def main():
         print("  stream    - Test WebSocket streams")
         print("  state     - Test state recovery (requires API keys)")
         print("  features  - Test feature pipeline")
+        print("  risk      - Test risk engine")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -67,6 +68,8 @@ def main():
         sys.exit(state_recovery_test())
     elif command == "features":
         sys.exit(features_test())
+    elif command == "risk":
+        sys.exit(risk_test())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -350,6 +353,97 @@ def features_test():
 
     except Exception as e:
         logger.error(f"✗ Features test failed: {e}", exc_info=True)
+        return 1
+
+
+def risk_test():
+    """Тест risk engine"""
+    logger.info("=== Risk Engine Test Started ===")
+
+    try:
+        from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
+        from storage.database import Database
+
+        # 1. Position Sizer
+        logger.info("\n[1] Testing Position Sizer...")
+        sizer = PositionSizer(risk_per_trade_percent=2.0, max_leverage=10.0)
+
+        result = sizer.calculate_position_size(
+            account_balance=10000.0,  # $10,000
+            entry_price=100000.0,  # BTC at $100k
+            stop_loss_price=98000.0,  # 2% stop
+            side="Buy",
+        )
+
+        if result["success"]:
+            logger.info(f"  ✓ Position size: {result['position_size']} BTC")
+            logger.info(f"  ✓ Position value: ${result['position_value']}")
+            logger.info(f"  ✓ Required leverage: {result['required_leverage']}x")
+            logger.info(f"  ✓ Risk amount: ${result['risk_amount']}")
+        else:
+            logger.error(f"  ✗ Position sizing failed: {result.get('error')}")
+
+        # 2. Risk Limits
+        logger.info("\n[2] Testing Risk Limits...")
+        db = Database()
+        limits = RiskLimits(
+            db,
+            max_daily_loss_percent=5.0,
+            max_trades_per_day=20,
+            max_concurrent_positions=3,
+        )
+
+        # Проверяем лимиты для новой сделки
+        proposed_trade = {"symbol": "BTCUSDT", "size": 0.1, "value": 10000.0}
+
+        check_result = limits.check_limits(account_balance=10000.0, proposed_trade=proposed_trade)
+
+        if check_result["allowed"]:
+            logger.info("  ✓ Trade allowed by risk limits")
+        else:
+            logger.warning(f"  ✗ Trade blocked: {check_result['violations']}")
+
+        # Симулируем превышение лимита
+        limits.trades_today = 25  # Больше макс.
+        check_result2 = limits.check_limits(account_balance=10000.0, proposed_trade=proposed_trade)
+
+        if not check_result2["allowed"]:
+            logger.info(f"  ✓ Correctly blocked trade: {check_result2['violations'][0]}")
+
+        # 3. Circuit Breaker
+        logger.info("\n[3] Testing Circuit Breaker...")
+        breaker = CircuitBreaker(max_consecutive_losses=3, max_spread_percent=1.0)
+
+        # Симулируем серию убытков
+        for i in range(1, 4):
+            breaker.check_consecutive_losses("loss")
+            if breaker.is_circuit_broken:
+                logger.info(f"  ✓ Circuit breaker triggered after {i} losses")
+                break
+
+        # 4. Kill Switch
+        logger.info("\n[4] Testing Kill Switch...")
+        kill_switch = KillSwitch(db)
+
+        # Проверяем статус
+        if not kill_switch.check_status():
+            logger.info("  ✓ Kill switch not active")
+
+        # Активируем
+        kill_switch.activate("Test activation")
+
+        if kill_switch.is_activated:
+            logger.info("  ✓ Kill switch activated successfully")
+
+        # Сбрасываем
+        if kill_switch.reset("RESET"):
+            logger.info("  ✓ Kill switch reset successfully")
+
+        logger.info("\n=== Risk Engine Test Passed ===")
+        return 0
+
+    except Exception as e:
+        logger.error(f"✗ Risk engine test failed: {e}", exc_info=True)
         return 1
 
 
