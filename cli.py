@@ -6,6 +6,7 @@ Command Line Interface для управления ботом.
 import time
 import sys
 from logger import setup_logger
+from config import Config
 
 logger = setup_logger()
 

@@ -3,7 +3,12 @@
 """
 
 import pytest
-from config import Config
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import config as config_module
+Config = config_module.Config
 
 
 def test_config_loads_from_env(monkeypatch):

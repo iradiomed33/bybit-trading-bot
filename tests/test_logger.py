@@ -4,9 +4,13 @@
 
 import logging
 import pytest
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from logger import setup_logger
-from config import Config
+import config as config_module
+Config = config_module.Config
 
 
 def test_logger_creates_log_directory():

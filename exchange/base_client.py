@@ -166,7 +166,7 @@ class BybitRestClient:
 
                 if ret_code != 0:
                     logger.error(
-                        f"API error: retCode={ret_code}, retMsg={ret_msg}, endpoint={endpoint}"
+                        f"API error: retCode={ret_code}, retMsg={ret_msg}, endpoint={endpoint}, params={params}"
                     )
                     # Некоторые ошибки не стоит повторять
                     if ret_code in [10001, 10003, 10004]:  # Auth errors

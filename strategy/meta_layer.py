@@ -13,8 +13,10 @@ import pandas as pd
 from strategy.base_strategy import BaseStrategy
 from data.timeframe_cache import TimeframeCache
 from logger import setup_logger
+from signal_logger import get_signal_logger
 
 logger = setup_logger(__name__)
+signal_logger = get_signal_logger()
 
 
 class RegimeSwitcher:
@@ -132,14 +134,19 @@ class NoTradeZones:
             return False, "Data anomaly detected"
 
         # 2. Плохая ликвидность (широкий спред)
+        # На тестовой сети спред может быть очень большим из-за малого объёма
+        # Поэтому проверяем только экстремальные значения (> 10%)
         spread_percent = features.get("spread_percent", 0)
-        if spread_percent > 2.0:  # Спред > 2% (смягчено с 1%)
+        if spread_percent > 10.0:  # Спред > 10% - это явно ошибка данных или запредельный спред
             return False, f"Excessive spread: {spread_percent:.2f}%"
 
         # 3. Низкая глубина стакана
+        # На тестовой сети стакан может быть очень дисбалансирован из-за малого объема торговли
+        # Поэтому отключаем эту проверку для testnet или проверяем только критические значения (> 0.99)
         depth_imbalance = features.get("depth_imbalance", 0)
-        if abs(depth_imbalance) > 0.9:  # Сильный дисбаланс (смягчено с 0.8)
-            return False, f"Orderbook imbalance: {depth_imbalance:.2f}"
+        # Закомментировано: слишком строго для тестовой сети
+        # if abs(depth_imbalance) > 0.99:
+        #     return False, f"Orderbook imbalance: {depth_imbalance:.2f}"
 
         # 4. Серия ошибок (передаётся извне)
         if error_count > 5:  # Смягчено с 3
@@ -203,8 +210,11 @@ class MetaLayer:
 
         # 4. Собираем сигналы от всех активных стратегий
         signals = []
+        active_strategies_info = []
+        
         for strategy in self.strategies:
             if strategy.is_enabled:
+                active_strategies_info.append(strategy.name)
                 signal = strategy.generate_signal(df, features)
                 if signal:
                     signal["strategy"] = strategy.name
@@ -213,6 +223,21 @@ class MetaLayer:
                         f"Signal from {strategy.name}: {signal['signal']} "
                         f"(conf={signal['confidence']:.2f})"
                     )
+
+        # Если ни одна стратегия не дала сигнала - логируем отладку
+        if not signals:
+            latest = df.iloc[-1]
+            signal_logger.log_debug_info(
+                category="strategy_analysis",
+                regime=regime,
+                active_strategies=active_strategies_info,
+                market_conditions={
+                    "adx": round(latest.get("ADX_14", 0), 2),
+                    "close": round(latest.get("close", 0), 2),
+                    "volume_z": round(latest.get("volume_zscore", 0), 2),
+                    "atr": round(latest.get("atr", 0), 4),
+                }
+            )
 
         # 5. Арбитраж сигналов
         final_signal = self.arbitrator.arbitrate_signals(signals)

@@ -20,8 +20,10 @@ from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
 from execution import OrderManager, PositionManager
 from utils import retry_api_call
 from logger import setup_logger
+from signal_logger import get_signal_logger
 
 logger = setup_logger(__name__)
+signal_logger = get_signal_logger()
 
 
 class TradingBot:
@@ -78,7 +80,7 @@ class TradingBot:
 
     def run(self):
         """Главный цикл бота"""
-        logger.info(f"🚀 Starting bot in {self.mode.upper()} mode...")
+        logger.info(f"Starting bot in {self.mode.upper()} mode...")
 
         # Проверка kill switch
         if self.kill_switch.check_status():
@@ -114,7 +116,24 @@ class TradingBot:
                 signal = self.meta_layer.get_signal(df_with_features, features)
 
                 if signal:
+                    # Логируем сгенерированный сигнал
+                    signal_logger.log_signal_generated(
+                        strategy_name=signal.get('strategy', 'Unknown'),
+                        symbol=self.symbol,
+                        direction=signal.get('signal', 'unknown').upper(),
+                        confidence=signal.get('confidence', 0),
+                        price=signal.get('entry_price', 0),
+                        reason=signal.get('reason', ''),
+                    )
                     self._process_signal(signal)
+                else:
+                    # Логируем отладочную информацию - нет сигналов
+                    signal_logger.log_debug_info(
+                        category="market_analysis",
+                        symbol=self.symbol,
+                        last_close=float(df_with_features.iloc[-1]['close']),
+                        no_signal_reason="No strategy triggered"
+                    )
 
                 # 5. Обновляем метрики
                 self._update_metrics()
@@ -276,6 +295,14 @@ class TradingBot:
     def _process_signal(self, signal: Dict[str, Any]):
         """Обработать торговый сигнал"""
         logger.info(f"Processing signal: {signal['signal']} from {signal.get('strategy')}")
+        
+        # Логируем что сигнал принят
+        signal_logger.log_signal_accepted(
+            strategy_name=signal.get('strategy', 'Unknown'),
+            symbol=self.symbol,
+            direction=signal.get('signal', 'unknown').upper(),
+            confidence=signal.get('confidence', 0),
+        )
 
         # В paper mode просто логируем
         if self.mode == "paper":

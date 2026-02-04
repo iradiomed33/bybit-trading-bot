@@ -58,6 +58,7 @@ class ConfigManager:
         return {
             "trading": {
                 "symbol": "BTCUSDT",
+                "symbols": ["BTCUSDT"],  # Array of trading pairs
                 "mode": "paper",
                 "testnet": True,
                 "active_strategies": ["TrendPullback", "Breakout", "MeanReversion"],

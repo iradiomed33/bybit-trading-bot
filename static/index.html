@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bybit Trading Bot - Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">
+                    <i class="bi bi-robot"></i> Trading Bot
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav ms-auto gap-3">
+                        <li class="nav-item">
+                            <span class="nav-link" id="connectionStatus">
+                                <span class="badge bg-danger">Offline</span>
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link" id="currentTime"></span>
+                        </li>
+                        <li class="nav-item">
+                            <span class="nav-link" id="userInfo">
+                                👤 Guest
+                            </span>
+                        </li>
+                        <li class="nav-item">
+                            <button class="btn btn-sm btn-outline-danger" id="logoutBtn" onclick="logout()" style="display: none;">
+                                <i class="bi bi-box-arrow-right"></i> Logout
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <div class="row mt-4">
+            <!-- Левая боковая панель -->
+            <div class="col-md-2">
+                <div class="d-flex flex-column gap-2">
+                    <button class="btn btn-primary active" data-tab="dashboard">
+                        <i class="bi bi-speedometer2"></i> Dashboard
+                    </button>
+                    <button class="btn btn-outline-primary" data-tab="settings">
+                        <i class="bi bi-gear"></i> Настройки
+                    </button>
+                    <button class="btn btn-outline-primary" data-tab="history">
+                        <i class="bi bi-clock-history"></i> История
+                    </button>
+                    <button class="btn btn-outline-primary" data-tab="signals-log">
+                        <i class="bi bi-bug"></i> Логи Сигналов
+                    </button>
+                    <button class="btn btn-outline-primary" data-tab="account">
+                        <i class="bi bi-wallet2"></i> Аккаунт
+                    </button>
+                </div>
+            </div>
+
+            <!-- Основной контент -->
+            <div class="col-md-10">
+                <!-- DASHBOARD TAB -->
+                <div id="dashboard" class="tab-content active">
+                    <h2 class="mb-4">Dashboard</h2>
+
+                    <!-- Кнопки управления ботом -->
+                    <div class="row mb-4">
+                        <div class="col-md-12">
+                            <div class="btn-group" role="group">
+                                <button type="button" class="btn btn-success btn-lg" id="startBotBtn" onclick="startBot()">
+                                    <i class="bi bi-play-fill"></i> Запустить бота
+                                </button>
+                                <button type="button" class="btn btn-danger btn-lg" id="stopBotBtn" onclick="stopBot()" disabled>
+                                    <i class="bi bi-stop-fill"></i> Остановить бота
+                                </button>
+                            </div>
+                            <div id="botStatusMessage" class="mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- Статус бота -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6 class="card-title">Режим</h6>
+                                    <p class="card-text fs-5" id="botMode">-</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6 class="card-title">Символ</h6>
+                                    <p class="card-text fs-5" id="botSymbol">-</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6 class="card-title">Статус</h6>
+                                    <p class="card-text fs-5">
+                                        <span class="badge bg-warning" id="botStatus">Stopped</span>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h6 class="card-title">Риск</h6>
+                                    <p class="card-text fs-5" id="riskPercent">-</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Баланс -->
+                    <div class="row mb-4">
+                        <div class="col-md-4">
+                            <div class="card bg-success text-white">
+                                <div class="card-body">
+                                    <h6 class="card-title">Баланс</h6>
+                                    <p class="card-text fs-5" id="totalBalance">$0.00</p>
+                                    <small>Всего</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-info text-white">
+                                <div class="card-body">
+                                    <h6 class="card-title">PnL</h6>
+                                    <p class="card-text fs-5" id="unrealizedPnl">$0.00</p>
+                                    <small>Нереализованная</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-secondary text-white">
+                                <div class="card-body">
+                                    <h6 class="card-title">Позиции</h6>
+                                    <p class="card-text fs-5" id="positionCount">0</p>
+                                    <small>Открытых</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Статистика торговли -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Статистика сигналов</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div id="signalStats">
+                                        <p class="text-muted">Загрузка...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Последние сигналы</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div id="recentSignals" style="max-height: 300px; overflow-y: auto;">
+                                        <p class="text-muted">Загрузка...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SETTINGS TAB -->
+                <div id="settings" class="tab-content" style="display: none;">
+                    <h2 class="mb-4">Настройки</h2>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Торговля</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Торговые Пары</label>
+                                        <input type="text" class="form-control" id="settingSymbols" 
+                                               placeholder="BTCUSDT, ETHUSDT, SOLUSDT" 
+                                               title="Введи пары через запятую">
+                                        <small class="form-text text-muted">Пары разделяй запятой и пробелом</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Основная пара</label>
+                                        <input type="text" class="form-control" id="settingSymbol" placeholder="BTCUSDT">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Режим</label>
+                                        <select class="form-select" id="settingMode">
+                                            <option value="paper">Paper</option>
+                                            <option value="live">Live</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Управление рисками</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Риск позиции (%)</label>
+                                        <input type="number" class="form-control" id="settingRiskPercent" min="0.1" max="10" step="0.1">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Максимальное плечо</label>
+                                        <input type="number" class="form-control" id="settingMaxLeverage" min="1" max="100" step="1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Стопы и профиты</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Stop Loss (%)</label>
+                                        <input type="number" class="form-control" id="settingStopLoss" min="0.1" max="10" step="0.1">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Take Profit (%)</label>
+                                        <input type="number" class="form-control" id="settingTakeProfit" min="0.1" max="50" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Действия</h6>
+                                </div>
+                                <div class="card-body">
+                                    <button class="btn btn-success w-100 mb-2" id="savSettingsBtn">
+                                        <i class="bi bi-check"></i> Сохранить
+                                    </button>
+                                    <button class="btn btn-warning w-100" id="resetSettingsBtn">
+                                        <i class="bi bi-arrow-clockwise"></i> Сбросить на дефолты
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HISTORY TAB -->
+                <div id="history" class="tab-content" style="display: none;">
+                    <h2 class="mb-4">История торговли</h2>
+
+                    <ul class="nav nav-tabs mb-3" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" data-bs-toggle="tab" href="#signaslTab">Сигналы</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-toggle="tab" href="#ordersTab">Ордера</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-toggle="tab" href="#executionsTab">Исполнения</a>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- Сигналы -->
+                        <div id="signaslTab" class="tab-pane fade show active">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>Время</th>
+                                            <th>Стратегия</th>
+                                            <th>Символ</th>
+                                            <th>Тип</th>
+                                            <th>Цена</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="signalsTable">
+                                        <tr>
+                                            <td colspan="5" class="text-center text-muted">Загрузка...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Ордера -->
+                        <div id="ordersTab" class="tab-pane fade">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Символ</th>
+                                            <th>Сторона</th>
+                                            <th>Тип</th>
+                                            <th>Цена</th>
+                                            <th>Кол-во</th>
+                                            <th>Статус</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="ordersTable">
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted">Загрузка...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Исполнения -->
+                        <div id="executionsTab" class="tab-pane fade">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Символ</th>
+                                            <th>Сторона</th>
+                                            <th>Цена</th>
+                                            <th>Кол-во</th>
+                                            <th>Комиссия</th>
+                                            <th>Время</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="executionsTable">
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted">Загрузка...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SIGNALS LOG TAB -->
+                <div id="signals-log" class="tab-content" style="display: none;">
+                    <h2 class="mb-4">
+                        <i class="bi bi-bug"></i> Логи Сигналов - Отладка
+                    </h2>
+                    
+                    <div class="alert alert-info mb-4">
+                        <strong>💡 Совет:</strong> Здесь вы видите ВСЕ сигналы с их статусом (приняты/отклонены) и причинами. 
+                        Используйте для отладки, если ордера не открываются.
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <select class="form-control" id="signalLogLevel">
+                                    <option value="all">Все логи</option>
+                                    <option value="info">Только успешные</option>
+                                    <option value="warning">Только отклоненные</option>
+                                    <option value="error">Только ошибки</option>
+                                </select>
+                                <button class="btn btn-outline-secondary" onclick="loadSignalLogs()">
+                                    <i class="bi bi-arrow-clockwise"></i> Обновить
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="clearSignalLogs()">
+                                    <i class="bi bi-trash"></i> Очистить
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <input type="number" class="form-control" id="signalLogLimit" value="50" min="10" max="500" placeholder="Кол-во логов">
+                                <button class="btn btn-outline-secondary" onclick="loadSignalLogs()">Загрузить</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <strong>Логи сигналов в реальном времени</strong>
+                            <span class="badge bg-secondary float-end" id="signalLogCount">0 логов</span>
+                        </div>
+                        <div class="card-body" style="max-height: 600px; overflow-y: auto; background-color: #1e1e1e;">
+                            <div id="signalLogsContainer">
+                                <p class="text-muted">Загрузка логов...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 alert alert-secondary">
+                        <strong>📋 Что смотреть:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li><code class="text-success">✅ SIGNAL GENERATED</code> - Стратегия создала сигнал</li>
+                            <li><code class="text-success">✅ SIGNAL ACCEPTED</code> - Сигнал прошел все проверки и ордер открыт</li>
+                            <li><code class="text-danger">❌ SIGNAL REJECTED</code> - Сигнал отклонен (причина в логе)</li>
+                            <li><code class="text-danger">❌ ORDER EXEC FAILED</code> - Ордер не выполнен (причина в логе)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- ACCOUNT TAB -->
+                <div id="account" class="tab-content" style="display: none;">
+                    <h2 class="mb-4">Аккаунт</h2>
+
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Информация аккаунта</h6>
+                                </div>
+                                <div class="card-body" id="accountInfo">
+                                    <p class="text-muted">Загрузка...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Балансы</h6>
+                                </div>
+                                <div class="card-body" id="balanceInfo">
+                                    <p class="text-muted">Загрузка...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0">Открытые позиции</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>Символ</th>
+                                            <th>Сторона</th>
+                                            <th>Размер</th>
+                                            <th>Цена входа</th>
+                                            <th>Текущая цена</th>
+                                            <th>PnL</th>
+                                            <th>PnL %</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="positionsTable">
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted">Нет открытых позиций</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

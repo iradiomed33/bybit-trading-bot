@@ -28,11 +28,11 @@
     }
   },
   "risk_management": {
-    "position_risk_percent": 10,
+    "position_risk_percent": 5.0,
     "max_leverage": 10,
     "max_position_size": 0.5,
-    "stop_loss_percent": 5,
-    "take_profit_percent": 10
+    "stop_loss_percent": 5.0,
+    "take_profit_percent": 10.0
   },
   "strategies": {
     "TrendPullback": {
@@ -49,7 +49,7 @@
     },
     "MeanReversion": {
       "enabled": true,
-      "confidence_threshold": 0.3,
+      "confidence_threshold": 0.30,
       "lookback": 20,
       "std_dev_threshold": 1.5
     }
