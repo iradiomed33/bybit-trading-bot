@@ -47,15 +47,19 @@ def main():
     """Точка входа CLI"""
     if len(sys.argv) < 2:
         print("Usage: python cli.py <command>")
-        print("Commands:")
+        print("\nTesting:")
         print("  health     - Check configuration and system health")
         print("  market     - Test market data endpoints")
         print("  stream     - Test WebSocket streams")
-        print("  state      - Test state recovery (requires API keys)")
+        print("  state      - Test state recovery")
         print("  features   - Test feature pipeline")
         print("  risk       - Test risk engine")
-        print("  execution  - Test execution engine (requires API keys)")
+        print("  execution  - Test execution engine")
         print("  strategy   - Test strategies and meta-layer")
+        print("\nTrading:")
+        print("  backtest   - Run backtest on historical data")
+        print("  paper      - Run paper trading (simulation)")
+        print("  live       - Run live trading (REAL MONEY)")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -76,6 +80,12 @@ def main():
         sys.exit(execution_test())
     elif command == "strategy":
         sys.exit(strategy_test())
+    elif command == "backtest":
+        sys.exit(backtest_command())
+    elif command == "paper":
+        sys.exit(paper_command())
+    elif command == "live":
+        sys.exit(live_command())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -635,6 +645,177 @@ def strategy_test():
 
     except Exception as e:
         logger.error(f"✗ Strategy test failed: {e}", exc_info=True)
+        return 1
+
+
+def backtest_command():
+    """Запуск backtest"""
+    logger.info("=== Backtest Started ===")
+
+    try:
+        from exchange.market_data import MarketDataClient
+        from data.features import FeaturePipeline
+        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
+        from strategy.meta_layer import MetaLayer
+        from backtest import BacktestEngine
+        from storage.database import Database
+        import pandas as pd
+
+        # Получаем данные
+        testnet = Config.ENVIRONMENT == "testnet"
+        market_client = MarketDataClient(testnet=testnet)
+        pipeline = FeaturePipeline()
+
+        symbol = "BTCUSDT"
+        logger.info(f"Fetching historical data for {symbol}...")
+        kline_resp = market_client.get_kline(symbol, interval="60", limit=1000)  # Больше данных
+
+        candles = kline_resp.get("result", {}).get("list", [])
+        df = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"],
+        )
+
+        for col in ["timestamp", "open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+        logger.info(f"Data loaded: {len(df)} candles")
+
+        # Строим фичи
+        logger.info("Building features...")
+        df_with_features = pipeline.build_features(df)
+
+        # Стратегии
+        strategies = [
+            TrendPullbackStrategy(),
+            BreakoutStrategy(),
+            MeanReversionStrategy(),
+        ]
+        meta = MetaLayer(strategies)
+
+        # Backtest engine
+        db = Database()
+        engine = BacktestEngine(db, initial_balance=10000.0)
+
+        logger.info("Running backtest...")
+
+        # Прогоняем через все свечи
+        start_idx = 200  # Пропускаем первые 200 для прогрева индикаторов
+        total_candles = len(df_with_features) - start_idx
+
+        for i in range(start_idx, len(df_with_features)):
+            current_df = df_with_features.iloc[: i + 1]
+            current_price = current_df.iloc[-1]["close"]
+            timestamp = current_df.iloc[-1]["timestamp"]
+
+            # Проверяем выход
+            engine.check_exit(timestamp, current_price)
+
+            # Получаем сигнал
+            if not engine.current_position:
+                signal = meta.get_signal(current_df, {}, error_count=0)
+                if signal:
+                    engine.open_position(signal, timestamp, current_price)
+
+            # Записываем equity
+            engine.record_equity(timestamp, current_price)
+
+            # Прогресс каждые 50 свечей
+            if (i - start_idx + 1) % 50 == 0:
+                progress = ((i - start_idx + 1) / total_candles) * 100
+                print(
+                    f"Progress: {progress:.1f}% ({i - start_idx + 1}/{total_candles})",
+                    end="\r",
+                )
+
+        print()  # Новая строка после прогресса
+
+        # Закрываем открытую позицию если есть
+        if engine.current_position:
+            engine.close_position(
+                df_with_features.iloc[-1]["timestamp"],
+                df_with_features.iloc[-1]["close"],
+                "end_of_data",
+            )
+
+        # Метрики
+        logger.info("\n=== Backtest Results ===")
+        metrics = engine.calculate_metrics()
+
+        if "error" in metrics:
+            logger.warning(f"No trades executed: {metrics['error']}")
+        else:
+            for key, value in metrics.items():
+                if isinstance(value, float):
+                    logger.info(f"  {key}: {value:.2f}")
+                else:
+                    logger.info(f"  {key}: {value}")
+
+        logger.info("\n=== Backtest Completed ===")
+        return 0
+
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}", exc_info=True)
+        return 1
+
+
+def paper_command():
+    """Запуск paper trading"""
+    logger.info("=== Paper Trading Mode ===")
+
+    try:
+        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
+        from bot import TradingBot
+
+        strategies = [
+            TrendPullbackStrategy(),
+            BreakoutStrategy(),
+            MeanReversionStrategy(),
+        ]
+
+        testnet = Config.ENVIRONMENT == "testnet"
+        bot = TradingBot(mode="paper", strategies=strategies, testnet=testnet)
+
+        bot.run()
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Paper trading failed: {e}", exc_info=True)
+        return 1
+
+
+def live_command():
+    """Запуск live trading"""
+    logger.warning("=== LIVE TRADING MODE ===")
+    logger.warning("⚠️  This will trade with REAL money!")
+
+    confirmation = input("Type 'YES' to confirm: ")
+    if confirmation != "YES":
+        logger.info("Live trading cancelled")
+        return 0
+
+    try:
+        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
+        from bot import TradingBot
+
+        strategies = [
+            TrendPullbackStrategy(),
+            BreakoutStrategy(),
+            MeanReversionStrategy(),
+        ]
+
+        testnet = Config.ENVIRONMENT == "testnet"
+        bot = TradingBot(mode="live", strategies=strategies, testnet=testnet)
+
+        bot.run()
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Live trading failed: {e}", exc_info=True)
         return 1
 
 

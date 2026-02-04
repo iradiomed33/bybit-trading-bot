@@ -131,22 +131,22 @@ class NoTradeZones:
 
         # 2. Плохая ликвидность (широкий спред)
         spread_percent = features.get("spread_percent", 0)
-        if spread_percent > 1.0:  # Спред > 1%
+        if spread_percent > 2.0:  # Спред > 2% (смягчено с 1%)
             return False, f"Excessive spread: {spread_percent:.2f}%"
 
         # 3. Низкая глубина стакана
         depth_imbalance = features.get("depth_imbalance", 0)
-        if abs(depth_imbalance) > 0.8:  # Сильный дисбаланс
+        if abs(depth_imbalance) > 0.9:  # Сильный дисбаланс (смягчено с 0.8)
             return False, f"Orderbook imbalance: {depth_imbalance:.2f}"
 
         # 4. Серия ошибок (передаётся извне)
-        if error_count > 3:
+        if error_count > 5:  # Смягчено с 3
             return False, f"Too many errors: {error_count}"
 
         # 5. Экстремальная волатильность
         vol_regime = latest.get("vol_regime", 0)
         atr_percent = latest.get("atr_percent", 0)
-        if vol_regime == 1 and atr_percent > 5.0:  # ATR > 5%
+        if vol_regime == 1 and atr_percent > 10.0:  # ATR > 10% (смягчено с 5%)
             return False, f"Extreme volatility: ATR={atr_percent:.2f}%"
 
         return True, None
@@ -186,12 +186,12 @@ class MetaLayer:
             df, features, error_count
         )
         if not trading_allowed:
-            logger.warning(f"Trading blocked: {block_reason}")
+            # Убрали логирование каждой блокировки для чистоты вывода
             return None
 
         # 2. Определяем режим рынка
         regime = self.regime_switcher.detect_regime(df)
-        logger.info(f"Market regime: {regime}")
+        # Логируем только при смене режима
 
         # 3. Включаем/выключаем стратегии по режиму
         self._adjust_strategies_by_regime(regime)

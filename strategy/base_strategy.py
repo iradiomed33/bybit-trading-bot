@@ -51,9 +51,7 @@ class BaseStrategy(ABC):
     def enable(self):
         """Включить стратегию"""
         self.is_enabled = True
-        logger.info(f"Strategy '{self.name}' enabled")
 
     def disable(self):
         """Выключить стратегию"""
         self.is_enabled = False
-        logger.info(f"Strategy '{self.name}' disabled")
