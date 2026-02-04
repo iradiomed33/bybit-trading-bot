@@ -48,12 +48,13 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python cli.py <command>")
         print("Commands:")
-        print("  health    - Check configuration and system health")
-        print("  market    - Test market data endpoints")
-        print("  stream    - Test WebSocket streams")
-        print("  state     - Test state recovery (requires API keys)")
-        print("  features  - Test feature pipeline")
-        print("  risk      - Test risk engine")
+        print("  health     - Check configuration and system health")
+        print("  market     - Test market data endpoints")
+        print("  stream     - Test WebSocket streams")
+        print("  state      - Test state recovery (requires API keys)")
+        print("  features   - Test feature pipeline")
+        print("  risk       - Test risk engine")
+        print("  execution  - Test execution engine (requires API keys)")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -70,6 +71,8 @@ def main():
         sys.exit(features_test())
     elif command == "risk":
         sys.exit(risk_test())
+    elif command == "execution":
+        sys.exit(execution_test())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -444,6 +447,102 @@ def risk_test():
 
     except Exception as e:
         logger.error(f"✗ Risk engine test failed: {e}", exc_info=True)
+        return 1
+
+
+def execution_test():
+    """Тест execution engine (требует API ключи)"""
+    logger.info("=== Execution Engine Test Started ===")
+
+    if not Config.BYBIT_API_KEY or not Config.BYBIT_API_SECRET:
+        logger.error("API keys required for execution test")
+        return 1
+
+    try:
+        from exchange.base_client import BybitRestClient
+        from storage.database import Database
+        from execution import OrderManager, PositionManager
+
+        testnet = Config.ENVIRONMENT == "testnet"
+        client = BybitRestClient(testnet=testnet)
+        db = Database()
+
+        # Order Manager
+        logger.info("\n[1] Testing Order Manager...")
+        order_mgr = OrderManager(client, db)
+
+        # ВНИМАНИЕ: Это создаст реальный ордер на testnet!
+        # Раскомментируйте только если готовы
+        """
+        result = order_mgr.create_order(
+            category="linear",
+            symbol="BTCUSDT",
+            side="Buy",
+            order_type="Limit",
+            qty=0.001,
+            price=50000.0,  # Заведомо низкая цена, не исполнится
+            time_in_force="PostOnly"
+        )
+
+        if result["success"]:
+            logger.info(f"  ✓ Order created: {result['order_id']}")
+
+            # Отменяем сразу
+            time.sleep(1)
+            cancel_result = order_mgr.cancel_order(
+                category="linear",
+                symbol="BTCUSDT",
+                order_id=result["order_id"]
+            )
+
+            if cancel_result["success"]:
+                logger.info(f"  ✓ Order cancelled")
+        """
+
+        logger.info("  ✓ Order Manager initialized (actual order test skipped)")
+
+        # Position Manager
+        logger.info("\n[2] Testing Position Manager...")
+        pos_mgr = PositionManager(order_mgr)
+
+        # Регистрируем тестовую позицию
+        pos_mgr.register_position(
+            symbol="BTCUSDT",
+            side="Buy",
+            entry_price=100000.0,
+            size=0.1,
+            stop_loss=98000.0,  # 2% риск
+            take_profit=104000.0,  # 4% профит (R:R = 1:2)
+            breakeven_trigger=1.5,  # Б/у при 1.5R
+        )
+
+        # Симулируем движение цены
+        logger.info("\n[3] Simulating price movement...")
+
+        # Цена 101000 - небольшой профит
+        pos_mgr.update_position("BTCUSDT", 101000.0, 0.1)
+        status = pos_mgr.get_position_status("BTCUSDT")
+        logger.info(
+            f"  Price 101000: BE moved={status['breakeven_moved']}, SL={status['stop_loss']}"
+        )
+
+        # Цена 103000 - достигнут BE trigger (1.5R)
+        pos_mgr.update_position("BTCUSDT", 103000.0, 0.1)
+        status = pos_mgr.get_position_status("BTCUSDT")
+        logger.info(
+            f"  Price 103000: BE moved={status['breakeven_moved']}, SL={status['stop_loss']}"
+        )
+
+        # Цена 105000 - трейлинг
+        pos_mgr.update_position("BTCUSDT", 105000.0, 0.1)
+        status = pos_mgr.get_position_status("BTCUSDT")
+        logger.info(f"  Price 105000: Trailing SL={status['stop_loss']}")
+
+        logger.info("\n=== Execution Engine Test Passed ===")
+        return 0
+
+    except Exception as e:
+        logger.error(f"✗ Execution test failed: {e}", exc_info=True)
         return 1
 
 
