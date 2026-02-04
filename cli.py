@@ -3,6 +3,7 @@ Command Line Interface для управления ботом.
 Пока только health check команда.
 """
 
+import time
 import sys
 from logger import setup_logger
 from config import Config
@@ -49,6 +50,7 @@ def main():
         print("Commands:")
         print("  health   - Check configuration and system health")
         print("  market   - Test market data endpoints (instruments, kline, orderbook)")
+        print("  stream   - Test WebSocket streams (kline + orderbook)")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -57,6 +59,8 @@ def main():
         sys.exit(health_check())
     elif command == "market":
         sys.exit(market_data_test())
+    elif command == "stream":
+        sys.exit(stream_test())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -107,7 +111,7 @@ def market_data_test():
                 )
 
         # 4. Orderbook
-        logger.info("4. Fetching orderbook (BTCUSDT, depth=5)...")
+        logger.info("4. Fetching orderbook (BTCUSDT, depth=50)...")
         orderbook_resp = client.get_orderbook(symbol="BTCUSDT", limit=5)
         if orderbook_resp.get("retCode") == 0:
             result = orderbook_resp.get("result", {})
@@ -126,6 +130,78 @@ def market_data_test():
     except Exception as e:
         logger.error(f"✗ Market data test failed: {e}", exc_info=True)
         logger.info("=== Market Data Test Failed ===")
+        return 1
+
+
+def stream_test():
+    """Тест WebSocket streams (kline + orderbook)"""
+    import signal
+    import sys
+
+    logger.info("=== WebSocket Stream Test Started ===")
+    logger.info("Press Ctrl+C to stop")
+
+    testnet = Config.ENVIRONMENT == "testnet"
+    symbol = "BTCUSDT"
+    kline_count = [0]  # Используем список для изменения в closure
+    orderbook_count = [0]
+
+    def on_kline(kline_data):
+        """Callback для kline"""
+        kline_count[0] += 1
+        confirm = kline_data.get("confirm", False)
+        close_price = kline_data.get("close", "N/A")
+        volume = kline_data.get("volume", "N/A")
+        logger.info(
+            f"[Kline #{kline_count[0]}] Close: {close_price}, Volume: {volume}, Confirmed: {confirm}"
+        )
+
+    def on_orderbook(orderbook):
+        """Callback для orderbook"""
+        orderbook_count[0] += 1
+        bids = orderbook["bids"]
+        asks = orderbook["asks"]
+
+        if bids and asks:
+            best_bid = bids[0][0]
+            best_ask = asks[0][0]
+            spread = float(best_ask) - float(best_bid)
+            logger.info(
+                f"[Orderbook #{orderbook_count[0]}] Best bid: {best_bid}, Best ask: {best_ask}, Spread: {spread:.2f}"
+            )
+
+    try:
+        from exchange.streams import KlineStream, OrderbookStream
+
+        # Kline stream (1 минута)
+        logger.info(f"Starting Kline stream: {symbol} 1m")
+        kline_stream = KlineStream(symbol, "1", on_kline, testnet)
+        kline_stream.start()
+
+        # Orderbook stream (глубина 50)
+        logger.info(f"Starting Orderbook stream: {symbol} depth=50")
+        orderbook_stream = OrderbookStream(symbol, 50, on_orderbook, testnet)
+        orderbook_stream.start()
+
+        # Graceful shutdown при Ctrl+C
+        def signal_handler(sig, frame):
+            logger.info("\n=== Stopping streams... ===")
+            kline_stream.stop()
+            orderbook_stream.stop()
+            logger.info(f"Total klines received: {kline_count[0]}")
+            logger.info(f"Total orderbook updates: {orderbook_count[0]}")
+            logger.info("=== WebSocket Stream Test Stopped ===")
+            sys.exit(0)
+
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # Держим программу активной
+        logger.info("Streams running... Press Ctrl+C to stop")
+        while True:
+            time.sleep(1)
+
+    except Exception as e:
+        logger.error(f"✗ Stream test failed: {e}", exc_info=True)
         return 1
 
 
