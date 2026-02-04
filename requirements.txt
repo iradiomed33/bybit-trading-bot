@@ -10,3 +10,8 @@ pytest-cov==4.1.0
 
 # WebSocket
 websocket-client==1.7.0
+
+# Data analysis
+numpy==1.26.3
+pandas==2.2.0
+#ta-lib==0.4.28  # Technical Analysis Library (нужна установка отдельно)

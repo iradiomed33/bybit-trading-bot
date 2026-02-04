@@ -48,10 +48,11 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python cli.py <command>")
         print("Commands:")
-        print("  health   - Check configuration and system health")
-        print("  market   - Test market data endpoints")
-        print("  stream   - Test WebSocket streams")
-        print("  state    - Test state recovery (requires API keys)")
+        print("  health    - Check configuration and system health")
+        print("  market    - Test market data endpoints")
+        print("  stream    - Test WebSocket streams")
+        print("  state     - Test state recovery (requires API keys)")
+        print("  features  - Test feature pipeline")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -64,6 +65,8 @@ def main():
         sys.exit(stream_test())
     elif command == "state":
         sys.exit(state_recovery_test())
+    elif command == "features":
+        sys.exit(features_test())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -254,6 +257,99 @@ def state_recovery_test():
 
     except Exception as e:
         logger.error(f"✗ State recovery test failed: {e}", exc_info=True)
+        return 1
+
+
+def features_test():
+    """Тест feature pipeline"""
+    logger.info("=== Features Test Started ===")
+
+    try:
+        from exchange.market_data import MarketDataClient
+        from data.features import FeaturePipeline
+        import pandas as pd
+
+        testnet = Config.ENVIRONMENT == "testnet"
+        market_client = MarketDataClient(testnet=testnet)
+        pipeline = FeaturePipeline()
+
+        # Получаем исторические данные
+        symbol = "BTCUSDT"
+        logger.info(f"Fetching kline data for {symbol}...")
+        kline_resp = market_client.get_kline(symbol, interval="60", limit=500)
+
+        if kline_resp.get("retCode") != 0:
+            logger.error("Failed to fetch kline data")
+            return 1
+
+        # Преобразуем в DataFrame
+        candles = kline_resp.get("result", {}).get("list", [])
+        df = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"],
+        )
+
+        # Конвертируем типы
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+
+        # Сортируем по времени (Bybit возвращает в обратном порядке)
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+        logger.info(f"Data loaded: {len(df)} candles")
+
+        # Получаем стакан
+        logger.info("Fetching orderbook...")
+        orderbook_resp = market_client.get_orderbook(symbol, limit=50)
+        orderbook = None
+        if orderbook_resp.get("retCode") == 0:
+            result = orderbook_resp.get("result", {})
+            orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
+
+        # Строим фичи
+        logger.info("Building features...")
+        df_with_features = pipeline.build_features(df, orderbook=orderbook)
+
+        # Показываем последние значения
+        logger.info("=== Latest Features ===")
+        latest = df_with_features.iloc[-1]
+
+        # Trend
+        logger.info(
+            f"[Trend] EMA20: {latest.get('ema_20', 'N/A'):.2f}, "
+            f"ADX: {latest.get('ADX_14', 'N/A'):.2f}"
+        )
+
+        # Volatility
+        logger.info(
+            f"[Volatility] ATR%: {latest.get('atr_percent', 'N/A'):.2f}, "
+            f"Vol Regime: {latest.get('vol_regime', 'N/A')}"
+        )
+
+        # Volume
+        logger.info(
+            f"[Volume] Z-score: {latest.get('volume_zscore', 'N/A'):.2f}, "
+            f"VWAP dist: {latest.get('vwap_distance', 'N/A'):.2f}%"
+        )
+
+        # Order Flow
+        if orderbook:
+            logger.info(
+                f"[OrderFlow] Spread: {latest.get('spread', 'N/A'):.2f}, "
+                f"Imbalance: {latest.get('depth_imbalance', 'N/A'):.2f}"
+            )
+
+        # Data Quality
+        logger.info(f"[Quality] Has anomaly: {latest.get('has_anomaly', 'N/A')}")
+
+        logger.info(f"Total features: {len(df_with_features.columns)}")
+        logger.info("=== Features Test Passed ===")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"✗ Features test failed: {e}", exc_info=True)
         return 1
 
 
