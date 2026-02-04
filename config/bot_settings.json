@@ -1,0 +1,73 @@
+{
+  "trading": {
+    "symbol": "BTCUSDT",
+    "mode": "live",
+    "testnet": true,
+    "active_strategies": ["TrendPullback", "Breakout", "MeanReversion"]
+  },
+  "market_data": {
+    "kline_interval": "60",
+    "kline_limit": 500,
+    "orderbook_depth": 50,
+    "data_refresh_interval": 12,
+    "derivatives": {
+      "fetch_mark_price": true,
+      "fetch_index_price": true,
+      "fetch_open_interest": true,
+      "fetch_funding_rate": true
+    }
+  },
+  "risk_management": {
+    "position_risk_percent": 1.0,
+    "max_leverage": 10.0,
+    "max_position_size": 0.1,
+    "stop_loss_percent": 2.0,
+    "take_profit_percent": 5.0
+  },
+  "strategies": {
+    "TrendPullback": {
+      "enabled": true,
+      "confidence_threshold": 0.6,
+      "min_candles": 20,
+      "lookback": 30
+    },
+    "Breakout": {
+      "enabled": true,
+      "confidence_threshold": 0.65,
+      "lookback": 20,
+      "breakout_percent": 0.02
+    },
+    "MeanReversion": {
+      "enabled": true,
+      "confidence_threshold": 0.55,
+      "lookback": 30,
+      "std_dev_threshold": 2.0
+    }
+  },
+  "meta_layer": {
+    "use_mtf": true,
+    "mtf_timeframes": ["1m", "5m", "15m", "60m", "240m", "D"],
+    "volatility_filter_enabled": true,
+    "volatility_threshold": 0.02,
+    "no_trade_hours": []
+  },
+  "execution": {
+    "order_type": "limit",
+    "time_in_force": "GTC",
+    "use_breakeven": true,
+    "use_partial_exit": true,
+    "partial_exit_percent": 0.5
+  },
+  "logging": {
+    "level": "INFO",
+    "max_log_size_mb": 100,
+    "keep_logs_days": 7
+  },
+  "api": {
+    "retry_max_attempts": 3,
+    "retry_backoff_factor": 2.0,
+    "retry_initial_delay": 0.5,
+    "retry_max_delay": 10.0,
+    "request_timeout": 30
+  }
+}

@@ -6,7 +6,6 @@ Command Line Interface для управления ботом.
 import time
 import sys
 from logger import setup_logger
-from config import Config
 
 logger = setup_logger()
 
@@ -60,6 +59,9 @@ def main():
         print("  backtest   - Run backtest on historical data")
         print("  paper      - Run paper trading (simulation)")
         print("  live       - Run live trading (REAL MONEY)")
+        print("\nManagement:")
+        print("  config     - Manage bot configuration")
+        print("  reset-kill-switch - Reset emergency stop flag after crash")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -86,6 +88,10 @@ def main():
         sys.exit(paper_command())
     elif command == "live":
         sys.exit(live_command())
+    elif command == "reset-kill-switch":
+        sys.exit(reset_kill_switch())
+    elif command == "config":
+        sys.exit(config_command())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -816,6 +822,149 @@ def live_command():
 
     except Exception as e:
         logger.error(f"Live trading failed: {e}", exc_info=True)
+        return 1
+
+
+def reset_kill_switch():
+    """Сброс kill switch для перезапуска после аварийного завершения"""
+    logger.warning("=== KILL SWITCH RESET ===")
+    logger.warning("⚠️  Это сбросит флаг аварийного завершения.")
+    logger.warning("Используй ТОЛЬКО если бот был аварийно остановлен.")
+
+    confirmation = input("Type 'RESET' to confirm: ").strip()
+
+    if confirmation != "RESET":
+        logger.warning("Reset cancelled")
+        return 1
+
+    try:
+        from storage.database import Database
+
+        db = Database()
+        cursor = db.conn.cursor()
+        # Delete kill_switch activation error from the last 24 hours
+        cursor.execute(
+            """
+            DELETE FROM errors
+            WHERE error_type = 'kill_switch_activated'
+            AND timestamp > ?
+        """,
+            (db.conn.execute("SELECT strftime('%s', 'now', '-1 day')").fetchone()[0],),
+        )
+        db.conn.commit()
+        db.close()
+
+        logger.info("✅ Kill switch has been reset!")
+        logger.info("You can now start the bot with: python cli.py live")
+        return 0
+
+    except Exception as e:
+        logger.error(f"Failed to reset kill switch: {e}", exc_info=True)
+        return 1
+
+
+def config_command():
+    """Управление конфигурацией бота"""
+    from config import get_config
+    import json
+
+    if len(sys.argv) < 3:
+        print("Usage: python cli.py config <action> [args]")
+        print("\nActions:")
+        print("  show              - Show current configuration")
+        print("  get <key>         - Get config value (e.g., trading.symbol)")
+        print("  set <key> <value> - Set config value (e.g., trading.symbol ETHUSDT)")
+        print("  section <name>    - Show config section (e.g., risk_management)")
+        print("  save              - Save current config to file")
+        print("  reset             - Reset to default configuration")
+        print("  validate          - Validate configuration")
+        return 1
+
+    action = sys.argv[2]
+    config = get_config()
+
+    try:
+        if action == "show":
+            logger.info("=== Current Configuration ===")
+            print(json.dumps(config.to_dict(), indent=2, ensure_ascii=False))
+            return 0
+
+        elif action == "get":
+            if len(sys.argv) < 4:
+                logger.error("Usage: python cli.py config get <key>")
+                return 1
+            key = sys.argv[3]
+            value = config.get(key)
+            logger.info(f"{key} = {value}")
+            return 0
+
+        elif action == "set":
+            if len(sys.argv) < 5:
+                logger.error("Usage: python cli.py config set <key> <value>")
+                return 1
+            key = sys.argv[3]
+            value = sys.argv[4]
+            
+            # Попытаемся распарсить как число
+            try:
+                if value.lower() in ("true", "false"):
+                    value = value.lower() == "true"
+                elif "." in value:
+                    value = float(value)
+                else:
+                    value = int(value)
+            except (ValueError, AttributeError):
+                pass  # Оставляем как строку
+            
+            config.set(key, value)
+            config.save()
+            logger.info(f"✅ Config updated: {key} = {value}")
+            return 0
+
+        elif action == "section":
+            if len(sys.argv) < 4:
+                logger.error("Usage: python cli.py config section <name>")
+                return 1
+            section = sys.argv[3]
+            data = config.get_section(section)
+            logger.info(f"=== Section: {section} ===")
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+            return 0
+
+        elif action == "save":
+            if config.save():
+                logger.info("✅ Configuration saved")
+                return 0
+            else:
+                logger.error("Failed to save configuration")
+                return 1
+
+        elif action == "reset":
+            confirmation = input("Type 'RESET' to confirm reset to defaults: ").strip()
+            if confirmation == "RESET":
+                if config.reset_to_defaults():
+                    logger.info("✅ Configuration reset to defaults")
+                    return 0
+            logger.warning("Reset cancelled")
+            return 1
+
+        elif action == "validate":
+            is_valid, errors = config.validate()
+            if is_valid:
+                logger.info("✅ Configuration is valid")
+                return 0
+            else:
+                logger.error("Configuration has errors:")
+                for error in errors:
+                    logger.error(f"  - {error}")
+                return 1
+
+        else:
+            logger.error(f"Unknown action: {action}")
+            return 1
+
+    except Exception as e:
+        logger.error(f"Config command failed: {e}", exc_info=True)
         return 1
 
 

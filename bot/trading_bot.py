@@ -18,6 +18,7 @@ from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
 from execution import OrderManager, PositionManager
+from utils import retry_api_call
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -130,16 +131,32 @@ class TradingBot:
             self.stop()
 
     def _fetch_market_data(self) -> Optional[Dict[str, Any]]:
-        """Получить рыночные данные"""
+        """Получить рыночные данные с retry logic для всех данных"""
         try:
             import pandas as pd
 
-            # Kline
-            kline_resp = self.market_client.get_kline(self.symbol, interval="60", limit=500)
-            if kline_resp.get("retCode") != 0:
+            # Kline (основные данные с retry)
+            try:
+                kline_resp = retry_api_call(
+                    self.market_client.get_kline,
+                    self.symbol,
+                    interval="60",
+                    limit=500,
+                    max_retries=2
+                )
+            except Exception as e:
+                logger.error(f"Kline retry failed: {e}", exc_info=True)
+                return None
+                
+            if not kline_resp or kline_resp.get("retCode") != 0:
+                logger.warning(f"Failed to fetch kline data: {kline_resp}")
                 return None
 
             candles = kline_resp.get("result", {}).get("list", [])
+            if not candles:
+                logger.warning("No kline candles received")
+                return None
+                
             df = pd.DataFrame(
                 candles,
                 columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"],
@@ -149,62 +166,99 @@ class TradingBot:
                 df[col] = df[col].astype(float)
 
             df = df.sort_values("timestamp").reset_index(drop=True)
+            logger.debug(f"Loaded {len(df)} candles")
 
-            # Orderbook
-            orderbook_resp = self.market_client.get_orderbook(self.symbol, limit=50)
+            # Orderbook с retry
+            orderbook_resp = retry_api_call(
+                self.market_client.get_orderbook,
+                self.symbol,
+                limit=50,
+                max_retries=2
+            )
             orderbook = None
             orderflow_features = {}
 
-            if orderbook_resp.get("retCode") == 0:
+            if orderbook_resp and orderbook_resp.get("retCode") == 0:
                 result = orderbook_resp.get("result", {})
                 orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
                 orderflow_features = self.pipeline.calculate_orderflow_features(orderbook)
 
-            # Деривативные данные (Mark price, Index price, Open Interest, Funding)
+            # Деривативные данные с retry logic (могут быть rate limits)
             derivatives_data = {}
-            try:
-                # Mark price (текущая за последнюю свечу)
-                mark_resp = self.market_client.get_mark_price_kline(
-                    self.symbol, interval="1", limit=1
-                )
-                if mark_resp.get("retCode") == 0:
-                    mark_list = mark_resp.get("result", {}).get("list", [])
-                    if mark_list:
-                        mark_price = float(mark_list[0][1])  # Close price
+            
+            # Mark price с retry
+            mark_resp = retry_api_call(
+                self.market_client.get_mark_price_kline,
+                self.symbol,
+                interval="1",
+                limit=1,
+                max_retries=2
+            )
+            if mark_resp and mark_resp.get("retCode") == 0:
+                mark_list = mark_resp.get("result", {}).get("list", [])
+                if mark_list:
+                    try:
+                        mark_price = float(mark_list[0][1])
                         derivatives_data["mark_price"] = mark_price
+                    except (IndexError, ValueError):
+                        pass
 
-                # Index price
-                index_resp = self.market_client.get_index_price_kline(
-                    self.symbol, interval="1", limit=1
-                )
-                if index_resp.get("retCode") == 0:
-                    index_list = index_resp.get("result", {}).get("list", [])
-                    if index_list:
+            # Index price с retry
+            index_resp = retry_api_call(
+                self.market_client.get_index_price_kline,
+                self.symbol,
+                interval="1",
+                limit=1,
+                max_retries=2
+            )
+            if index_resp and index_resp.get("retCode") == 0:
+                index_list = index_resp.get("result", {}).get("list", [])
+                if index_list:
+                    try:
                         index_price = float(index_list[0][1])
                         derivatives_data["index_price"] = index_price
+                    except (IndexError, ValueError):
+                        pass
 
-                # Open Interest
-                oi_resp = self.market_client.get_open_interest(
-                    self.symbol, interval="5min", limit=1
-                )
-                if oi_resp.get("retCode") == 0:
-                    oi_list = oi_resp.get("result", {}).get("openInterestList", [])
-                    if oi_list:
+            # Open Interest с retry
+            oi_resp = retry_api_call(
+                self.market_client.get_open_interest,
+                self.symbol,
+                interval="5min",
+                limit=1,
+                max_retries=2
+            )
+            if oi_resp and oi_resp.get("retCode") == 0:
+                oi_list = oi_resp.get("result", {}).get("openInterestList", [])
+                if oi_list:
+                    try:
                         oi_value = float(oi_list[0][1])
                         derivatives_data["open_interest"] = oi_value
-                        # OI change (если есть предыдущая запись)
-                        derivatives_data["oi_change"] = 0  # Упрощение для первого запроса
+                        derivatives_data["oi_change"] = 0
+                    except (IndexError, ValueError):
+                        pass
 
-                # Funding Rate (последняя величина)
-                fr_resp = self.market_client.get_funding_rate_history(self.symbol, limit=1)
-                if fr_resp.get("retCode") == 0:
-                    fr_list = fr_resp.get("result", {}).get("list", [])
-                    if fr_list:
-                        funding_rate = float(fr_list[0][2])  # fundingRate field
+            # Funding Rate с retry
+            fr_resp = retry_api_call(
+                self.market_client.get_funding_rate_history,
+                self.symbol,
+                limit=1,
+                max_retries=2
+            )
+            if fr_resp and fr_resp.get("retCode") == 0:
+                fr_list = fr_resp.get("result", {}).get("list", [])
+                if fr_list:
+                    try:
+                        fr_item = fr_list[0]
+                        # funding rate может быть в разных полях в зависимости от API
+                        if isinstance(fr_item, dict):
+                            funding_rate = float(fr_item.get("fundingRate", 0))
+                        else:
+                            # Если это список/кортеж, то индекс 2
+                            funding_rate = float(fr_item[2])
                         derivatives_data["funding_rate"] = funding_rate
-
-            except Exception as e:
-                logger.warning(f"Failed to fetch derivative data: {e}")
+                    except (IndexError, ValueError, TypeError, KeyError) as e:
+                        logger.debug(f"Failed to parse funding rate: {e}")
 
             self.circuit_breaker.update_data_timestamp()
 
@@ -216,7 +270,7 @@ class TradingBot:
             }
 
         except Exception as e:
-            logger.error(f"Failed to fetch market data: {e}")
+            logger.error(f"Failed to fetch market data: {e}", exc_info=True)
             return None
 
     def _process_signal(self, signal: Dict[str, Any]):

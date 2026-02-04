@@ -8,7 +8,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from config import Config
 
 
 def setup_logger(name: str = "bybit_bot") -> logging.Logger:
@@ -21,8 +20,11 @@ def setup_logger(name: str = "bybit_bot") -> logging.Logger:
     Returns:
         Настроенный логгер
     """
+    # Значения по умолчанию (не зависимся от config чтобы избежать циклических импортов)
+    log_dir = Path("logs")
+    log_level = "INFO"
+
     # Создаём директорию для логов если её нет
-    log_dir = Path(Config.LOG_DIR)
     log_dir.mkdir(exist_ok=True)
 
     # Имя файла лога с датой
@@ -30,7 +32,7 @@ def setup_logger(name: str = "bybit_bot") -> logging.Logger:
 
     # Создаём логгер
     logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, Config.LOG_LEVEL.upper(), logging.INFO))
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     # Формат логов (structured)
     formatter = logging.Formatter(
