@@ -55,6 +55,7 @@ def main():
         print("  features   - Test feature pipeline")
         print("  risk       - Test risk engine")
         print("  execution  - Test execution engine (requires API keys)")
+        print("  strategy   - Test strategies and meta-layer")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -73,6 +74,8 @@ def main():
         sys.exit(risk_test())
     elif command == "execution":
         sys.exit(execution_test())
+    elif command == "strategy":
+        sys.exit(strategy_test())
     else:
         logger.error(f"Unknown command: {command}")
         sys.exit(1)
@@ -543,6 +546,95 @@ def execution_test():
 
     except Exception as e:
         logger.error(f"✗ Execution test failed: {e}", exc_info=True)
+        return 1
+
+
+def strategy_test():
+    """Тест стратегий и meta-layer"""
+    logger.info("=== Strategy Test Started ===")
+
+    try:
+        from exchange.market_data import MarketDataClient
+        from data.features import FeaturePipeline
+        from strategy import (
+            TrendPullbackStrategy,
+            BreakoutStrategy,
+            MeanReversionStrategy,
+            MetaLayer,
+        )
+        import pandas as pd
+
+        testnet = Config.ENVIRONMENT == "testnet"
+        market_client = MarketDataClient(testnet=testnet)
+        pipeline = FeaturePipeline()
+
+        # Получаем данные
+        symbol = "BTCUSDT"
+        logger.info(f"Fetching data for {symbol}...")
+        kline_resp = market_client.get_kline(symbol, interval="60", limit=500)
+        orderbook_resp = market_client.get_orderbook(symbol, limit=50)
+
+        # Преобразуем в DataFrame
+        candles = kline_resp.get("result", {}).get("list", [])
+        df = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume", "turnover"],
+        )
+
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = df[col].astype(float)
+
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+        # Orderbook
+        orderbook = None
+        if orderbook_resp.get("retCode") == 0:
+            result = orderbook_resp.get("result", {})
+            orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
+
+        # Строим фичи
+        logger.info("Building features...")
+        df_with_features = pipeline.build_features(df, orderbook=orderbook)
+
+        # Дополнительные фичи из orderbook
+        features = {}
+        if orderbook:
+            features = pipeline.calculate_orderflow_features(orderbook)
+
+        # Инициализируем стратегии
+        logger.info("\n[1] Initializing strategies...")
+        strategies = [
+            TrendPullbackStrategy(),
+            BreakoutStrategy(),
+            MeanReversionStrategy(),
+        ]
+
+        # Meta-layer
+        logger.info("\n[2] Creating meta-layer...")
+        meta = MetaLayer(strategies)
+
+        # Получаем сигнал
+        logger.info("\n[3] Generating signal...")
+        signal = meta.get_signal(df_with_features, features, error_count=0)
+
+        if signal:
+            logger.info("\n✓ SIGNAL GENERATED:")
+            logger.info(f"  Direction: {signal['signal'].upper()}")
+            logger.info(f"  Strategy: {signal.get('strategy', 'Unknown')}")
+            logger.info(f"  Confidence: {signal['confidence']:.2f}")
+            logger.info(f"  Entry: {signal['entry_price']:.2f}")
+            logger.info(f"  Stop Loss: {signal['stop_loss']:.2f}")
+            logger.info(f"  Take Profit: {signal.get('take_profit', 'N/A')}")
+            logger.info(f"  Reason: {signal['reason']}")
+            logger.info(f"  Regime: {signal.get('regime', 'Unknown')}")
+        else:
+            logger.info("\n✓ No signal (conditions not met or blocked)")
+
+        logger.info("\n=== Strategy Test Passed ===")
+        return 0
+
+    except Exception as e:
+        logger.error(f"✗ Strategy test failed: {e}", exc_info=True)
         return 1
 
 

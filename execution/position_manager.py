@@ -8,6 +8,7 @@ Position Manager: сопровождение позиции (SL/TP, breakeven, p
 4. Trailing stop
 5. Time stop (закрыть если не движется)
 """
+
 import time
 from typing import Dict, Any, Optional
 from execution.order_manager import OrderManager
@@ -67,9 +68,7 @@ class PositionManager:
             "partial_exits": [],
         }
 
-        logger.info(
-            f"Position registered: {side} {size} {symbol} @ {entry_price}, SL={stop_loss}"
-        )
+        logger.info(f"Position registered: {side} {size} {symbol} @ {entry_price}, SL={stop_loss}")
 
     def update_position(self, symbol: str, current_price: float, current_size: float):
         """
@@ -148,7 +147,8 @@ class PositionManager:
             # Двигаем стоп вверх если trailing_stop выше текущего стопа
             if trailing_stop > pos["stop_loss"]:
                 logger.info(
-                    f"Trailing stop updated: {symbol} SL {pos['stop_loss']:.2f} -> {trailing_stop:.2f}"
+                    f"Trailing stop updated: {symbol} "
+                    f"SL {pos['stop_loss']:.2f} -> {trailing_stop:.2f}"
                 )
                 pos["stop_loss"] = trailing_stop
         else:
@@ -157,7 +157,8 @@ class PositionManager:
 
             if trailing_stop < pos["stop_loss"]:
                 logger.info(
-                    f"Trailing stop updated: {symbol} SL {pos['stop_loss']:.2f} -> {trailing_stop:.2f}"
+                    f"Trailing stop updated: {symbol} "
+                    f"SL {pos['stop_loss']:.2f} -> {trailing_stop:.2f}"
                 )
                 pos["stop_loss"] = trailing_stop
 
@@ -169,9 +170,7 @@ class PositionManager:
         elapsed = time.time() - pos["entry_time"]
 
         if elapsed > time_limit:
-            logger.warning(
-                f"Time stop triggered for {symbol}: {elapsed / 60:.0f} minutes elapsed"
-            )
+            logger.warning(f"Time stop triggered for {symbol}: {elapsed / 60:.0f} minutes elapsed")
 
             # Закрываем позицию (упрощённо: просто логируем, реальное закрытие через order_manager)
             logger.info(f"Closing {symbol} due to time stop")
@@ -180,12 +179,13 @@ class PositionManager:
     def close_position(self, symbol: str, reason: str = "manual"):
         """Закрыть позицию"""
         if symbol in self.active_positions:
-            pos = self.active_positions[symbol]
             logger.info(f"Closing position: {symbol} (reason={reason})")
 
             # Здесь создаём противоположный ордер через order_manager
             # close_side = "Sell" if pos["side"] == "Buy" else "Buy"
-            # self.order_manager.create_order(..., side=close_side, qty=pos["current_size"], order_type="Market")
+            # self.order_manager.create_order(
+            #     ..., side=close_side, qty=pos["current_size"], order_type="Market"
+            # )
 
             # Удаляем из активных
             del self.active_positions[symbol]
