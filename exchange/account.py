@@ -132,3 +132,41 @@ class AccountClient:
         response = self.client.post("/v5/position/set-leverage", params=params)
 
         return response
+    def get_wallet_balance(self, coin: str = "USDT") -> Dict[str, Any]:
+        """
+        Получить баланс кошелька (wallet balance).
+
+        Args:
+            coin: Валюта (по умолчанию USDT)
+
+        Returns:
+            Dict с информацией о балансе (содержит 'balance' ключ с float значением)
+
+        Docs: https://bybit-exchange.github.io/docs/v5/account/wallet-balance
+        """
+        params = {"accountType": "UNIFIED"}
+        
+        logger.debug(f"Fetching wallet balance for {coin}")
+        response = self.client.get("/v5/account/wallet-balance", params=params, signed=True)
+        
+        try:
+            # Структура: response['result']['list'][0]['coin'][0]
+            if response.get("retCode") == 0:
+                accounts = response.get("result", {}).get("list", [])
+                for account in accounts:
+                    coins = account.get("coin", [])
+                    for coin_info in coins:
+                        if coin_info.get("coin") == coin:
+                            balance = float(coin_info.get("walletBalance", 0))
+                            logger.debug(f"Wallet balance: {balance} {coin}")
+                            return {"balance": balance, "coin": coin, "retCode": 0}
+                
+                # Если монета не найдена, возвращаем 0
+                logger.warning(f"Coin {coin} not found in wallet balance")
+                return {"balance": 0.0, "coin": coin, "retCode": 0}
+            else:
+                logger.error(f"Failed to get wallet balance: {response}")
+                return {"balance": 0.0, "coin": coin, "retCode": response.get("retCode", -1)}
+        except Exception as e:
+            logger.error(f"Error parsing wallet balance: {e}")
+            return {"balance": 0.0, "coin": coin, "retCode": -1}

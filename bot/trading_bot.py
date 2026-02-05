@@ -351,29 +351,49 @@ class TradingBot:
         else:
             # Live mode: реально открываем позицию
             try:
-                # Расчитаем размер позиции
-                qty = self.position_sizer.calculate_size(
-                    account_balance=self.account.get_balance(),
+                # 1. Получаем баланс аккаунта
+                balance_result = self.account.get_wallet_balance(coin="USDT")
+                account_balance = balance_result.get("balance", 0)
+                
+                if account_balance <= 0:
+                    logger.error(f"Invalid account balance: {account_balance}")
+                    return
+
+                # 2. Расчитаем размер позиции
+                position_info = self.position_sizer.calculate_position_size(
+                    account_balance=account_balance,
                     entry_price=signal["entry_price"],
-                    stop_loss=signal["stop_loss"],
-                    risk_percent=0.02,  # 2% риска на сделку
+                    stop_loss_price=signal["stop_loss"],
+                    side="Buy" if signal["signal"] == "long" else "Sell",
                 )
+
+                if not position_info.get("success", False):
+                    logger.warning(f"Position sizing failed: {position_info.get('error')}")
+                    return
+
+                qty = position_info.get("position_size", 0)
 
                 if qty <= 0:
                     logger.warning("Position size too small, skipping trade")
                     return
 
-                # Проверяем риск-лимиты
-                if not self.risk_limits.check_limits(
-                    position_size=qty,
-                    entry_price=signal["entry_price"],
-                    daily_loss=0,  # TODO: получить из БД
-                    consecutive_losses=0,  # TODO: получить из circuit breaker
-                ):
-                    logger.warning("Trade rejected by risk limits")
+                # 3. Проверяем риск-лимиты
+                proposed_trade = {
+                    "symbol": self.symbol,
+                    "size": qty,
+                    "value": qty * signal["entry_price"],
+                }
+                
+                limits_check = self.risk_limits.check_limits(
+                    account_balance=account_balance,
+                    proposed_trade=proposed_trade,
+                )
+
+                if not limits_check.get("allowed", False):
+                    logger.warning(f"Trade rejected by risk limits: {limits_check.get('violations')}")
                     return
 
-                # Выставляем ордер
+                # 4. Выставляем ордер
                 side = "Buy" if signal["signal"] == "long" else "Sell"
                 order_result = self.order_manager.create_order(
                     category="linear",
@@ -386,9 +406,9 @@ class TradingBot:
 
                 if order_result.get("retCode") == 0:
                     order_id = order_result.get("result", {}).get("orderId")
-                    logger.info(f"✓ Order placed: {order_id}")
+                    logger.info(f"[LIVE] Order placed: {order_id}")
 
-                    # Регистрируем позицию для сопровождения
+                    # 5. Регистрируем позицию для сопровождения
                     self.position_manager.register_position(
                         symbol=self.symbol,
                         side=side,
@@ -398,7 +418,10 @@ class TradingBot:
                         take_profit=signal.get("take_profit"),
                     )
 
-                    # Сохраняем сигнал в БД
+                    # 6. Обновляем счётчик сделок
+                    self.risk_limits.increment_trade_count()
+
+                    # 7. Сохраняем сигнал в БД
                     self.db.save_signal(
                         strategy=signal.get("strategy", "Unknown"),
                         symbol=self.symbol,
@@ -406,6 +429,8 @@ class TradingBot:
                         price=signal["entry_price"],
                         metadata=signal,
                     )
+                    
+                    logger.info(f"Trade executed successfully: {side} {qty} @ {signal['entry_price']}")
                 else:
                     logger.error(f"Failed to place order: {order_result}")
 
