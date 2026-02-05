@@ -25,6 +25,8 @@ from execution.position_signal_handler import (
     SignalAction,
 )
 from execution.kill_switch import KillSwitchManager
+from execution.paper_trading_simulator import PaperTradingSimulator, PaperTradingConfig
+from execution.trade_metrics import TradeMetricsCalculator, EquityCurve
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
@@ -178,9 +180,24 @@ class TradingBot:
             self.order_manager = OrderManager(rest_client, self.db)
             self.position_manager = PositionManager(self.order_manager)
         else:
-            # Paper mode: используем симуляцию
+            # Paper mode: используем симуляцию (E1)
             self.order_manager = None
             self.position_manager = None
+            
+            # Инициализируем PaperTradingSimulator
+            paper_config = PaperTradingConfig(
+                initial_balance=Decimal("10000"),
+                maker_commission=Decimal("0.0002"),
+                taker_commission=Decimal("0.0004"),
+                slippage_buy=Decimal("0.0001"),
+                slippage_sell=Decimal("0.0001"),
+                use_random_slippage=False,
+                seed=None,  # Для воспроизводимости установить seed
+            )
+            self.paper_simulator = PaperTradingSimulator(paper_config)
+            self.equity_curve = EquityCurve()
+            logger.info(f"Paper Trading Simulator initialized with balance ${float(paper_config.initial_balance):.2f}")
+
 
         logger.info("TradingBot initialized successfully")
 
@@ -273,6 +290,39 @@ class TradingBot:
                                 position_id=position_id,
                                 current_price=current_price,
                             )
+                
+                # 6a. Проверяем SL/TP для paper mode (E1)
+                if self.mode == "paper" and data.get("df") is not None:
+                    current_price = Decimal(str(data["df"].iloc[-1]["close"]))
+                    
+                    # Обновить цены позиций
+                    self.paper_simulator.update_market_prices({self.symbol: current_price})
+                    
+                    # Проверить SL/TP триггеры
+                    triggered = self.paper_simulator.check_sl_tp(current_price)
+                    
+                    for symbol, trigger_type in triggered.items():
+                        # Закрыть позицию по SL/TP
+                        success, msg = self.paper_simulator.close_position_on_trigger(
+                            symbol=symbol,
+                            trigger_type=trigger_type,
+                            exit_price=current_price,
+                        )
+                        
+                        if success:
+                            logger.info(f"Paper: Position closed by {trigger_type.upper()}: {msg}")
+                            # Записать в БД
+                            self.db.save_signal(
+                                strategy="SL/TP",
+                                symbol=symbol,
+                                signal_type=f"close_{trigger_type}",
+                                price=float(current_price),
+                                metadata={"trigger": trigger_type},
+                            )
+                    
+                    # Записать точку на equity curve
+                    equity = self.paper_simulator.get_equity()
+                    self.equity_curve.add_point(time.time(), equity)
 
                 # 7. Синхронизируем состояние позиции с биржей (если в live mode)
                 if self.mode == "live" and self.position_state_manager:
@@ -500,16 +550,77 @@ class TradingBot:
             confidence=signal.get('confidence', 0),
         )
 
-        # В paper mode просто логируем
+        # В paper mode используем симулятор (E1)
         if self.mode == "paper":
-            logger.info(f"[PAPER] Would open {signal['signal']} @ {signal['entry_price']}")
-            self.db.save_signal(
-                strategy=signal.get("strategy", "Unknown"),
-                symbol=self.symbol,
-                signal_type=signal["signal"],
-                price=signal["entry_price"],
-                metadata=signal,
-            )
+            try:
+                # Вычислить размер позиции (используем volatility sizer если есть)
+                account_balance = self.paper_simulator.get_account_summary()["equity"]
+                
+                qty = None
+                atr = signal.get("atr", None)
+                if self.volatility_position_sizer and atr:
+                    atr_decimal = Decimal(str(atr))
+                    try:
+                        qty_vol, _ = self.volatility_position_sizer.calculate_position_size(
+                            account=Decimal(str(account_balance)),
+                            entry_price=Decimal(str(signal["entry_price"])),
+                            atr=atr_decimal,
+                            signal=signal.get("signal", "long")
+                        )
+                        qty = float(qty_vol)
+                    except Exception as e:
+                        logger.warning(f"Volatility sizing failed: {e}")
+                
+                if qty is None:
+                    # Fallback: 1% от equity
+                    qty = float(Decimal(str(account_balance)) * Decimal("0.01") / Decimal(str(signal["entry_price"])))
+                
+                if qty <= 0:
+                    logger.warning("Position size too small for paper trading")
+                    return
+                
+                # Отправить market ордер в симулятор
+                side = "Buy" if signal["signal"] == "long" else "Sell"
+                order_id, success, msg = self.paper_simulator.submit_market_order(
+                    symbol=self.symbol,
+                    side=side,
+                    qty=Decimal(str(qty)),
+                    current_price=Decimal(str(signal["entry_price"])),
+                )
+                
+                if not success:
+                    logger.warning(f"Paper trading order failed: {msg}")
+                    return
+                
+                # Установить SL/TP если они есть в сигнале
+                if signal.get("stop_loss") and signal.get("take_profit"):
+                    self.paper_simulator.set_stop_loss_take_profit(
+                        symbol=self.symbol,
+                        stop_loss=Decimal(str(signal["stop_loss"])),
+                        take_profit=Decimal(str(signal["take_profit"])),
+                    )
+                
+                # Записать сигнал в БД
+                self.db.save_signal(
+                    strategy=signal.get("strategy", "Unknown"),
+                    symbol=self.symbol,
+                    signal_type=signal["signal"],
+                    price=signal["entry_price"],
+                    metadata={
+                        **signal,
+                        "order_id": order_id,
+                        "qty": qty,
+                        "mode": "paper"
+                    },
+                )
+                
+                logger.info(
+                    f"[PAPER] {side} {qty:.6f} {self.symbol} @ ${float(signal['entry_price']):.2f}, "
+                    f"equity: ${float(account_balance):.2f}"
+                )
+                
+            except Exception as e:
+                logger.error(f"Paper trading error: {e}", exc_info=True)
         else:
             # Live mode: реально открываем позицию
             try:
@@ -805,6 +916,77 @@ class TradingBot:
     def _update_metrics(self):
         """Обновить метрики и equity"""
         pass  # TODO: Реализовать сбор метрик
+
+    def get_paper_trading_report(self) -> Dict[str, Any]:
+        """
+        Получить отчет paper trading (E1).
+        Только для mode == 'paper'.
+        
+        Returns:
+            Dict с метриками, сделками и equity curve
+        """
+        if self.mode != "paper" or not hasattr(self, 'paper_simulator'):
+            return {"error": "Paper trading not active"}
+        
+        trades = self.paper_simulator.get_trades()
+        account_summary = self.paper_simulator.get_account_summary()
+        
+        # Вычислить метрики
+        metrics = TradeMetricsCalculator.calculate(
+            trades,
+            self.paper_simulator.initial_balance,
+            self.equity_curve,
+        )
+        
+        # Получить max drawdown из equity curve
+        max_dd_dollars, max_dd_percent = self.equity_curve.get_max_drawdown(
+            self.paper_simulator.initial_balance
+        )
+        
+        return {
+            "account": account_summary,
+            "trades": [
+                {
+                    "id": t.trade_id,
+                    "symbol": t.symbol,
+                    "side": t.side,
+                    "entry_price": float(t.entry_price),
+                    "exit_price": float(t.exit_price),
+                    "qty": float(t.entry_qty),
+                    "pnl": float(t.pnl),
+                    "pnl_after_commission": float(t.pnl_after_commission),
+                    "roi_percent": float(t.roi_percent),
+                    "was_sl_hit": t.was_sl_hit,
+                    "was_tp_hit": t.was_tp_hit,
+                    "duration_seconds": t.duration_seconds,
+                }
+                for t in trades
+            ],
+            "metrics": {
+                "total_trades": metrics.total_trades,
+                "winning_trades": metrics.winning_trades,
+                "losing_trades": metrics.losing_trades,
+                "win_rate_percent": float(metrics.win_rate),
+                "profit_factor": float(metrics.profit_factor) if metrics.profit_factor != float('inf') else None,
+                "expectancy": float(metrics.expectancy),
+                "avg_pnl_per_trade": float(metrics.avg_pnl_per_trade),
+                "largest_win": float(metrics.largest_winning_trade),
+                "largest_loss": float(metrics.largest_losing_trade),
+                "max_drawdown_dollars": float(metrics.max_drawdown_dollars),
+                "max_drawdown_percent": float(metrics.max_drawdown_percent),
+                "sharpe_ratio": float(metrics.sharpe_ratio),
+                "sortino_ratio": float(metrics.sortino_ratio),
+                "recovery_factor": float(metrics.recovery_factor) if metrics.recovery_factor > 0 else None,
+                "sl_hit_rate_percent": float(metrics.sl_hit_rate),
+                "tp_hit_rate_percent": float(metrics.tp_hit_rate),
+                "total_commission_paid": float(metrics.total_commission_paid),
+            },
+            "equity_curve": {
+                "timestamps": self.equity_curve.timestamps,
+                "equity_values": self.equity_curve.equity_values,
+                "max_equity": float(self.equity_curve.max_equity),
+            }
+        }
 
     def stop(self):
         """Остановить бота"""
