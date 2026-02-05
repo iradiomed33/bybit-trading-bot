@@ -92,6 +92,7 @@ class TimeframeCache:
             True если сигналы согласованы, False иначе
         """
         if not timeframe_1m:
+            logger.debug("MTF Check: No 1m data available")
             return False
 
         # Базовая проверка: на 1m должна быть свеча
@@ -100,6 +101,8 @@ class TimeframeCache:
 
         is_uptrend_1m = close_1m > ema_20_1m
         is_downtrend_1m = close_1m < ema_20_1m
+        
+        logger.debug(f"MTF Check: 1m trend={'UP' if is_uptrend_1m else 'DOWN' if is_downtrend_1m else 'FLAT'} (close={close_1m:.2f}, ema={ema_20_1m:.2f})")
 
         # Опциональная проверка 5m
         if timeframe_5m:
@@ -108,16 +111,20 @@ class TimeframeCache:
 
             is_uptrend_5m = close_5m > ema_20_5m
             is_downtrend_5m = close_5m < ema_20_5m
+            
+            logger.debug(f"MTF Check: 5m trend={'UP' if is_uptrend_5m else 'DOWN' if is_downtrend_5m else 'FLAT'}")
 
             # Если 1m uptrend, то 5m тоже должна быть в uptrend
             if is_uptrend_1m and not is_uptrend_5m:
-                logger.debug("5m not in uptrend - weak signal")
+                logger.debug("MTF Check: FAILED - 5m not in uptrend (weak signal)")
                 return False
 
             # Если 1m downtrend, то 5m тоже должна быть в downtrend
             if is_downtrend_1m and not is_downtrend_5m:
-                logger.debug("5m not in downtrend - weak signal")
+                logger.debug("MTF Check: FAILED - 5m not in downtrend (weak signal)")
                 return False
+        else:
+            logger.debug("MTF Check: No 5m data (optional)")
 
         # Опциональная проверка 15m (фильтр волатильности)
         if timeframe_15m:
@@ -127,9 +134,12 @@ class TimeframeCache:
             if vol_regime == 1:  # High volatility
                 atr_percent = timeframe_15m.get("atr_percent", 0)
                 if atr_percent > 3.0:
-                    logger.debug(f"15m high volatility ({atr_percent:.2f}%) - blocking trade")
+                    logger.debug(f"MTF Check: FAILED - 15m high volatility ({atr_percent:.2f}%)")
                     return False
+        else:
+            logger.debug("MTF Check: No 15m data (optional)")
 
+        logger.debug("MTF Check: PASSED - confluence confirmed")
         return True
 
     def clear(self) -> None:

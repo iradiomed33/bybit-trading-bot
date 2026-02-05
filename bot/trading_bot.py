@@ -154,7 +154,7 @@ class TradingBot:
         try:
             import pandas as pd
 
-            # Kline (основные данные с retry)
+            # Главный таймфрейм - 1h
             try:
                 kline_resp = retry_api_call(
                     self.market_client.get_kline,
@@ -185,7 +185,41 @@ class TradingBot:
                 df[col] = df[col].astype(float)
 
             df = df.sort_values("timestamp").reset_index(drop=True)
-            logger.debug(f"Loaded {len(df)} candles")
+            logger.debug(f"Loaded {len(df)} candles for 1h timeframe")
+
+            # Загрузить данные для других таймфреймов в кэш (для MTF)
+            if self.meta_layer.use_mtf and self.meta_layer.timeframe_cache:
+                timeframes = [("1", "1m"), ("5", "5m"), ("15", "15m"), ("240", "4h")]
+                for interval, tf_name in timeframes:
+                    try:
+                        tf_resp = retry_api_call(
+                            self.market_client.get_kline,
+                            self.symbol,
+                            interval=interval,
+                            limit=100,
+                            max_retries=1
+                        )
+                        if tf_resp and tf_resp.get("retCode") == 0:
+                            tf_candles = tf_resp.get("result", {}).get("list", [])
+                            if tf_candles:
+                                # Добавить последнюю свечу в кэш
+                                last_candle = tf_candles[0]
+                                candle_dict = {
+                                    "timestamp": last_candle[0],
+                                    "open": float(last_candle[1]),
+                                    "high": float(last_candle[2]),
+                                    "low": float(last_candle[3]),
+                                    "close": float(last_candle[4]),
+                                    "volume": float(last_candle[5]),
+                                }
+                                self.meta_layer.timeframe_cache.add_candle(interval, candle_dict)
+                                logger.debug(f"Loaded {len(tf_candles)} candles for {tf_name} timeframe")
+                        else:
+                            logger.debug(f"Failed to fetch {tf_name} data")
+                    except Exception as e:
+                        logger.debug(f"Error fetching {tf_name} data: {e}")
+            else:
+                logger.debug("MTF disabled or cache not available")
 
             # Orderbook с retry
             orderbook_resp = retry_api_call(

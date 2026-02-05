@@ -55,7 +55,7 @@
     }
   },
   "meta_layer": {
-    "use_mtf": true,
+    "use_mtf": false,
     "mtf_timeframes": [
       "1m",
       "5m",
