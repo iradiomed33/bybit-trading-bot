@@ -28,6 +28,7 @@ from execution.kill_switch import KillSwitchManager
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
+from risk.advanced_risk_limits import AdvancedRiskLimits, RiskLimitsConfig, RiskDecision
 from execution import OrderManager, PositionManager
 from utils import retry_api_call
 from logger import setup_logger
@@ -129,6 +130,19 @@ class TradingBot:
         self.risk_limits = RiskLimits(self.db)
         self.circuit_breaker = CircuitBreaker()
         self.kill_switch = KillSwitch(self.db)
+        
+        # Advanced Risk Limits (D2 - для проверки leverage/notional/daily_loss/drawdown)
+        if mode == "live":
+            risk_config = RiskLimitsConfig(
+                max_leverage=Decimal("10"),
+                max_notional=Decimal("50000"),
+                daily_loss_limit_percent=Decimal("5"),
+                max_drawdown_percent=Decimal("10"),
+            )
+            self.advanced_risk_limits = AdvancedRiskLimits(self.db, risk_config)
+            logger.info("Advanced risk limits initialized (leverage/notional/daily_loss/drawdown)")
+        else:
+            self.advanced_risk_limits = None
 
         # Kill Switch Manager (для аварийного закрытия)
         if mode == "live":
@@ -489,6 +503,65 @@ class TradingBot:
                 if account_balance <= 0:
                     logger.error(f"Invalid account balance: {account_balance}")
                     return
+                
+                # D2: Проверяем риск-лимиты перед открытием позиции
+                if self.mode == "live" and self.advanced_risk_limits:
+                    # Собираем состояние для risk evaluation
+                    current_pos = (
+                        self.position_state_manager.get_position() 
+                        if self.position_state_manager and self.position_state_manager.has_position() 
+                        else None
+                    )
+                    
+                    current_notional = Decimal("0")
+                    current_leverage = Decimal("1")
+                    if current_pos:
+                        current_notional = Decimal(str(current_pos.qty)) * Decimal(str(signal.get("entry_price", 0)))
+                        current_leverage = Decimal(str(current_pos.qty)) * Decimal(str(signal.get("entry_price", 0))) / Decimal(str(account_balance))
+                    
+                    # Предполагаемый размер новой позиции
+                    new_position_notional = Decimal(str(signal.get("position_size", 0))) * Decimal(str(signal.get("entry_price", 0)))
+                    
+                    # Получаем текущий realized PnL за день
+                    realized_pnl_today = Decimal("0")  # TODO: Get from trade journal
+                    
+                    # Текущий equity
+                    current_equity = Decimal(str(account_balance))  # TODO: Add unrealized PnL
+                    
+                    risk_state = {
+                        "account_balance": Decimal(str(account_balance)),
+                        "open_position_notional": current_notional,
+                        "position_leverage": current_leverage,
+                        "new_position_notional": new_position_notional,
+                        "realized_pnl_today": realized_pnl_today,
+                        "current_equity": current_equity,
+                    }
+                    
+                    # Evaluate risk
+                    risk_decision, risk_details = self.advanced_risk_limits.evaluate(risk_state)
+                    
+                    logger.info(f"Risk evaluation: {risk_decision.value.upper()} - {risk_details['reason']}")
+                    
+                    if risk_decision == RiskDecision.DENY:
+                        logger.warning(f"Trade blocked by risk limits: {risk_details['reason']}")
+                        signal_logger.log_debug_info(
+                            category="trade_blocked_risk",
+                            symbol=self.symbol,
+                            reason=risk_details['reason'],
+                        )
+                        return
+                    
+                    elif risk_decision == RiskDecision.STOP:
+                        logger.critical(f"CRITICAL RISK VIOLATION - Triggering kill switch: {risk_details['reason']}")
+                        if self.kill_switch_manager:
+                            result = self.kill_switch_manager.activate(
+                                reason=f"Risk violation: {risk_details['reason']}"
+                            )
+                            logger.critical(
+                                f"Kill switch activated: {result['orders_cancelled']} orders cancelled, "
+                                f"{result['positions_closed']} positions closed"
+                            )
+                        return
 
                 # 0. Проверяем текущую позицию и определяем действие (flip/add/ignore)
                 current_pos = self.position_state_manager.get_position() if self.position_state_manager.has_position() else None
