@@ -18,6 +18,7 @@ from exchange.market_data import MarketDataClient
 from exchange.account import AccountClient
 from exchange.instruments import InstrumentsManager, normalize_order
 from storage.position_state import PositionStateManager
+from execution.stop_loss_tp_manager import StopLossTakeProfitManager, StopLossTPConfig
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
@@ -76,6 +77,23 @@ class TradingBot:
             logger.info(f"Position state manager initialized for {symbol}")
         else:
             self.position_state_manager = None
+
+        # Инициализируем менеджер SL/TP с привязкой к ATR
+        if mode == "live":
+            # Конфигурируем SL/TP на основе волатильности
+            sl_tp_config = StopLossTPConfig(
+                sl_atr_multiplier=1.5,      # SL = entry ± 1.5*ATR
+                tp_atr_multiplier=2.0,      # TP = entry ± 2.0*ATR
+                sl_percent_fallback=1.0,    # Если ATR нет, используем 1% от цены
+                tp_percent_fallback=2.0,    # Если ATR нет, используем 2% от цены
+                use_exchange_sl_tp=True,    # Попытаться использовать биржевые SL/TP
+                use_virtual_levels=True,    # Fallback на виртуальное отслеживание
+                enable_trailing_stop=True,  # Включить trailing stop
+            )
+            self.sl_tp_manager = StopLossTakeProfitManager(self.order_manager, sl_tp_config)
+            logger.info(f"SL/TP manager initialized with ATR-based levels")
+        else:
+            self.sl_tp_manager = None
 
         self.pipeline = FeaturePipeline()
         self.meta_layer = MetaLayer(strategies)
@@ -160,7 +178,37 @@ class TradingBot:
                 # 5. Обновляем метрики
                 self._update_metrics()
 
-                # 6. Синхронизируем состояние позиции с биржей (если в live mode)
+                # 6. Проверяем SL/TP уровни и виртуальные триггеры (если в live mode)
+                if self.mode == "live" and self.sl_tp_manager and data.get("df") is not None:
+                    current_price = Decimal(str(data["df"].iloc[-1]["close"]))
+                    current_atr = data["df"].iloc[-1].get("atr")
+                    
+                    # Проверяем все активные позиции на SL/TP триггеры
+                    for position_id, sl_tp_levels in self.sl_tp_manager.get_all_active_levels().items():
+                        # Проверяем виртуальные уровни
+                        triggered, trigger_type = self.sl_tp_manager.check_virtual_levels(
+                            position_id=position_id,
+                            current_price=current_price,
+                            current_qty=sl_tp_levels.entry_qty,
+                        )
+
+                        if triggered:
+                            # SL или TP триггернут - нужно закрыть позицию
+                            logger.warning(
+                                f"SL/TP triggered: {trigger_type.upper()} for {position_id} "
+                                f"@ {current_price} (SL={sl_tp_levels.sl_price}, TP={sl_tp_levels.tp_price})"
+                            )
+                            # TODO: Выполнить market close ордер
+                            self.sl_tp_manager.close_position_levels(position_id)
+
+                        # Обновляем trailing stop при благоприятном ценовом движении
+                        if current_atr:
+                            self.sl_tp_manager.update_trailing_stop(
+                                position_id=position_id,
+                                current_price=current_price,
+                            )
+
+                # 7. Синхронизируем состояние позиции с биржей (если в live mode)
                 if self.mode == "live" and self.position_state_manager:
                     if self.position_state_manager.has_position():
                         sync_success = self.position_state_manager.sync_with_exchange()
@@ -489,15 +537,51 @@ class TradingBot:
                         f"{side_long} {normalized_qty} @ {normalized_price}, orderId={order_id}"
                     )
 
-                    # 7. Регистрируем позицию в PositionManager для сопровождения (если используется)
+                    # 7. Рассчитываем и выставляем SL/TP уровни на основе ATR
+                    sl_tp_levels = None
+                    if self.sl_tp_manager and data.get("df") is not None:
+                        current_atr = data["df"].iloc[-1].get("atr")
+                        
+                        sl_tp_levels = self.sl_tp_manager.calculate_levels(
+                            position_id=order_id,
+                            symbol=self.symbol,
+                            side=side_long,
+                            entry_price=Decimal(str(normalized_price)),
+                            entry_qty=Decimal(str(normalized_qty)),
+                            current_atr=Decimal(str(current_atr)) if current_atr else None,
+                        )
+
+                        logger.info(
+                            f"[LIVE] SL/TP levels calculated: "
+                            f"SL={sl_tp_levels.sl_price}, TP={sl_tp_levels.tp_price} "
+                            f"(ATR={current_atr})"
+                        )
+
+                        # Пытаемся выставить SL/TP на бирже (если поддерживается)
+                        exchange_success, sl_order_id, tp_order_id = self.sl_tp_manager.place_exchange_sl_tp(
+                            position_id=order_id,
+                            category="linear",
+                        )
+
+                        if exchange_success and (sl_order_id or tp_order_id):
+                            logger.info(
+                                f"Exchange SL/TP orders placed: "
+                                f"SL={sl_order_id}, TP={tp_order_id}"
+                            )
+                        else:
+                            logger.info(
+                                f"Using virtual SL/TP monitoring for {order_id}"
+                            )
+
+                    # 8. Регистрируем позицию в PositionManager для сопровождения (если используется)
                     if self.position_manager:
                         self.position_manager.register_position(
                             symbol=self.symbol,
                             side=side,
                             entry_price=float(normalized_price),
                             size=float(normalized_qty),
-                            stop_loss=signal["stop_loss"],
-                            take_profit=signal.get("take_profit"),
+                            stop_loss=float(sl_tp_levels.sl_price) if sl_tp_levels else signal["stop_loss"],
+                            take_profit=float(sl_tp_levels.tp_price) if sl_tp_levels else signal.get("take_profit"),
                         )
 
                     # 8. Обновляем счётчик сделок

@@ -154,6 +154,29 @@ class Database:
         """
         )
 
+        # Таблица SL/TP уровней (для отслеживания и истории)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sl_tp_levels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                position_id TEXT UNIQUE NOT NULL,  -- order_id позиции
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,                -- 'Long', 'Short'
+                entry_price TEXT NOT NULL,         -- Decimal as string
+                entry_qty TEXT NOT NULL,
+                atr TEXT,                          -- Decimal, может быть NULL
+                sl_price TEXT NOT NULL,
+                tp_price TEXT NOT NULL,
+                sl_hit INTEGER DEFAULT 0,
+                tp_hit INTEGER DEFAULT 0,
+                closed_qty TEXT DEFAULT '0',
+                sl_order_id TEXT,                  -- ID ордера SL на бирже
+                tp_order_id TEXT,                  -- ID ордера TP на бирже
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
         self.conn.commit()
         logger.info("Database schema initialized")
 
@@ -329,6 +352,82 @@ class Database:
             WHERE status IN ('New', 'PartiallyFilled')
             ORDER BY created_time DESC
         """
+        )
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def save_sl_tp_levels(self, sl_tp_data: Dict[str, Any]) -> int:
+        """Сохранить SL/TP уровни позиции"""
+        cursor = self.conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO sl_tp_levels 
+            (position_id, symbol, side, entry_price, entry_qty, atr, 
+             sl_price, tp_price, sl_hit, tp_hit, closed_qty, sl_order_id, tp_order_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                sl_tp_data.get("position_id"),
+                sl_tp_data.get("symbol"),
+                sl_tp_data.get("side"),
+                sl_tp_data.get("entry_price"),
+                sl_tp_data.get("entry_qty"),
+                sl_tp_data.get("atr"),
+                sl_tp_data.get("sl_price"),
+                sl_tp_data.get("tp_price"),
+                sl_tp_data.get("sl_hit", False),
+                sl_tp_data.get("tp_hit", False),
+                sl_tp_data.get("closed_qty", "0"),
+                sl_tp_data.get("sl_order_id"),
+                sl_tp_data.get("tp_order_id"),
+            ),
+        )
+
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_sl_tp_levels(self, position_id: str) -> Optional[Dict[str, Any]]:
+        """Получить SL/TP уровни для позиции"""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM sl_tp_levels WHERE position_id = ?", (position_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def update_sl_tp_triggered(
+        self, position_id: str, trigger_type: str, closed_qty: str = "0"
+    ) -> bool:
+        """Обновить статус SL/TP триггера"""
+        cursor = self.conn.cursor()
+
+        if trigger_type == "sl":
+            cursor.execute(
+                "UPDATE sl_tp_levels SET sl_hit = 1, closed_qty = ? WHERE position_id = ?",
+                (closed_qty, position_id),
+            )
+        elif trigger_type == "tp":
+            cursor.execute(
+                "UPDATE sl_tp_levels SET tp_hit = 1, closed_qty = ? WHERE position_id = ?",
+                (closed_qty, position_id),
+            )
+        else:
+            return False
+
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def get_sl_tp_history(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Получить историю SL/TP для символа"""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM sl_tp_levels
+            WHERE symbol = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        """,
+            (symbol, limit),
         )
 
         rows = cursor.fetchall()
