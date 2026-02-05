@@ -17,6 +17,7 @@ from storage.database import Database
 from exchange.market_data import MarketDataClient
 from exchange.account import AccountClient
 from exchange.instruments import InstrumentsManager, normalize_order
+from storage.position_state import PositionStateManager
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
@@ -68,6 +69,13 @@ class TradingBot:
                 logger.warning("Failed to load instruments info")
         else:
             self.instruments_manager = None
+
+        # Инициализируем менеджер состояния позиции для отслеживания и синхронизации с биржей
+        if mode == "live":
+            self.position_state_manager = PositionStateManager(self.account_client, symbol)
+            logger.info(f"Position state manager initialized for {symbol}")
+        else:
+            self.position_state_manager = None
 
         self.pipeline = FeaturePipeline()
         self.meta_layer = MetaLayer(strategies)
@@ -151,6 +159,20 @@ class TradingBot:
 
                 # 5. Обновляем метрики
                 self._update_metrics()
+
+                # 6. Синхронизируем состояние позиции с биржей (если в live mode)
+                if self.mode == "live" and self.position_state_manager:
+                    if self.position_state_manager.has_position():
+                        sync_success = self.position_state_manager.sync_with_exchange()
+                        if not sync_success:
+                            logger.warning("Position state sync failed")
+                        
+                        # Проверяем валидность позиции (критические ошибки)
+                        is_valid, error_msg = self.position_state_manager.validate_position()
+                        if not is_valid:
+                            logger.error(f"Position validation failed: {error_msg}")
+                            # Закрываем позицию если есть критические ошибки
+                            self.position_state_manager.close_position()
 
                 # Пауза перед следующей итерацией
                 time.sleep(10)  # 10 секунд
@@ -365,8 +387,16 @@ class TradingBot:
         else:
             # Live mode: реально открываем позицию
             try:
+                # 0. Проверяем есть ли уже открытая позиция (предотвращаем дубликаты)
+                if self.position_state_manager.has_position():
+                    logger.warning(
+                        f"Position already open for {self.symbol}. "
+                        f"Skipping new trade signal to prevent duplicate positions."
+                    )
+                    return
+
                 # 1. Получаем баланс аккаунта
-                balance_result = self.account.get_wallet_balance(coin="USDT")
+                balance_result = self.account_client.get_wallet_balance(coin="USDT")
                 account_balance = balance_result.get("balance", 0)
                 
                 if account_balance <= 0:
@@ -445,25 +475,40 @@ class TradingBot:
                     order_id = order_result.get("result", {}).get("orderId")
                     logger.info(f"[LIVE] Order placed: {order_id}")
 
-                    # 6. Регистрируем позицию для сопровождения
-                    self.position_manager.register_position(
-                        symbol=self.symbol,
-                        side=side,
-                        entry_price=float(normalized_price),  # Используем нормализованную цену
-                        size=float(normalized_qty),  # Используем нормализованное количество
-                        stop_loss=signal["stop_loss"],
-                        take_profit=signal.get("take_profit"),
+                    # 6. Регистрируем позицию в PositionStateManager для отслеживания
+                    side_long = "Long" if signal["signal"] == "long" else "Short"
+                    self.position_state_manager.open_position(
+                        side=side_long,
+                        qty=Decimal(str(normalized_qty)),
+                        entry_price=Decimal(str(normalized_price)),
+                        order_id=order_id,
+                        strategy_id=signal.get("strategy", "Unknown"),
+                    )
+                    logger.info(
+                        f"Position registered in state manager: "
+                        f"{side_long} {normalized_qty} @ {normalized_price}, orderId={order_id}"
                     )
 
-                    # 7. Обновляем счётчик сделок
+                    # 7. Регистрируем позицию в PositionManager для сопровождения (если используется)
+                    if self.position_manager:
+                        self.position_manager.register_position(
+                            symbol=self.symbol,
+                            side=side,
+                            entry_price=float(normalized_price),
+                            size=float(normalized_qty),
+                            stop_loss=signal["stop_loss"],
+                            take_profit=signal.get("take_profit"),
+                        )
+
+                    # 8. Обновляем счётчик сделок
                     self.risk_limits.increment_trade_count()
 
-                    # 8. Сохраняем сигнал в БД
+                    # 9. Сохраняем сигнал в БД
                     self.db.save_signal(
                         strategy=signal.get("strategy", "Unknown"),
                         symbol=self.symbol,
                         signal_type=signal["signal"],
-                        price=float(normalized_price),  # Сохраняем нормализованную цену
+                        price=float(normalized_price),
                         metadata=signal,
                     )
                     
