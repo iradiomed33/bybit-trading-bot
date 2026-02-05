@@ -42,14 +42,14 @@ class TrendPullbackStrategy(BaseStrategy):
         latest = df.iloc[-1]
         symbol = features.get('symbol', 'UNKNOWN')
 
-        # Проверяем наличие нужных признаков
-        required_cols = ["close", "ema_20", "ema_50", "ADX_14", "atr", "volume_zscore"]
+        # Проверяем наличие нужных признаков (используем канонические имена)
+        required_cols = ["close", "ema_20", "ema_50", "adx", "atr", "volume_zscore"]
         if not all(col in df.columns for col in required_cols):
-            logger.warning(f"{self.name}: Missing required features")
+            logger.warning(f"{self.name}: Missing required features: {[c for c in required_cols if c not in df.columns]}")
             return None
 
-        # 1. Проверка тренда (ADX)
-        adx = latest.get("ADX_14", 0)
+        # 1. Проверка тренда (ADX) - используем каноническое имя "adx"
+        adx = latest.get("adx", 0)
         adx_passed = adx >= self.min_adx
         signal_logger.log_filter_check(
             filter_name="ADX (Trend Strength)",

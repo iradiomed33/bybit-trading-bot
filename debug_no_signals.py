@@ -78,7 +78,7 @@ def debug_no_signals():
         regime = RegimeSwitcher.detect_regime(df)
         logger.info(f"   Regime: {regime}")
         
-        adx = latest.get("ADX_14", 0)
+        adx = latest.get("adx", latest.get("ADX_14", 0))
         ema_20 = latest.get("ema_20", 0)
         ema_50 = latest.get("ema_50", 0)
         logger.info(f"   - ADX: {adx:.2f} (trend strength)")

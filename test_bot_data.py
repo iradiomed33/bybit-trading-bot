@@ -85,7 +85,7 @@ def test_market_data_fetch():
                     logger.info(f"   New columns: {df_with_features.columns.tolist()}")
                     
                     # Check if we have required columns for strategies
-                    required = ["ADX_14", "ema_20", "ema_50", "atr", "rsi", "vwap"]
+                    required = ["adx", "ema_20", "ema_50", "atr", "rsi", "vwap"]
                     missing = [col for col in required if col not in df_with_features.columns]
                     if missing:
                         logger.warning(f"   Missing columns for strategies: {missing}")

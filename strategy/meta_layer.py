@@ -30,10 +30,14 @@ class RegimeSwitcher:
         Returns:
             "trend_up" | "trend_down" | "range" | "high_vol"
         """
+        if df is None or df.empty:
+            logger.warning("RegimeSwitcher: Empty dataframe")
+            return "range"  # Safe default
+        
         latest = df.iloc[-1]
 
-        # ADX для силы тренда
-        adx = latest.get("ADX_14", 0)
+        # ADX для силы тренда (использует каноническое имя "adx")
+        adx = latest.get("adx", latest.get("ADX_14", 0))  # Fallback для совместимости
 
         # Volatility regime
         vol_regime = latest.get("vol_regime", 0)
@@ -41,6 +45,10 @@ class RegimeSwitcher:
         # EMA для направления
         ema_20 = latest.get("ema_20", 0)
         ema_50 = latest.get("ema_50", 0)
+        
+        if ema_20 == 0 or ema_50 == 0:
+            logger.warning("RegimeSwitcher: Missing EMA values")
+            return "range"  # Safe default
 
         # Высокая волатильность - особый режим
         if vol_regime == 1:
@@ -232,7 +240,7 @@ class MetaLayer:
                 regime=regime,
                 active_strategies=active_strategies_info,
                 market_conditions={
-                    "adx": round(latest.get("ADX_14", 0), 2),
+                    "adx": round(latest.get("adx", latest.get("ADX_14", 0)), 2),
                     "close": round(latest.get("close", 0), 2),
                     "volume_z": round(latest.get("volume_zscore", 0), 2),
                     "atr": round(latest.get("atr", 0), 4),

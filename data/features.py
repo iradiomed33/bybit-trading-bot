@@ -15,6 +15,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any, Optional
 from data.indicators import TechnicalIndicators
+from data.column_normalizer import normalize_column_names, ensure_required_columns
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -278,6 +279,18 @@ class FeaturePipeline:
             deriv_features = self.calculate_derivatives_features(**derivatives_data)
             for key, value in deriv_features.items():
                 df.loc[df.index[-1], key] = value
+
+        # Нормализовать имена колонок (ADX_14 → adx и т.д.)
+        df = normalize_column_names(df)
+
+        # Гарантировать наличие обязательных колонок
+        required_columns = [
+            "close", "adx", "rsi", "atr", "atr_percent",
+            "ema_10", "ema_20", "ema_50", "ema_200",
+            "sma_20", "sma_50",
+            "volume_zscore", "realized_vol"
+        ]
+        df = ensure_required_columns(df, required_columns)
 
         logger.info(f"Features built: {len(df.columns)} columns, {len(df)} rows")
 

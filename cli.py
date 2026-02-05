@@ -344,7 +344,7 @@ def features_test():
         # Trend
         logger.info(
             f"[Trend] EMA20: {latest.get('ema_20', 'N/A'):.2f}, "
-            f"ADX: {latest.get('ADX_14', 'N/A'):.2f}"
+            f"ADX: {latest.get('adx', latest.get('ADX_14', 'N/A')):.2f}"
         )
 
         # Volatility

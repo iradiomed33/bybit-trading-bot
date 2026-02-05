@@ -55,10 +55,23 @@ class TechnicalIndicators:
 
     @staticmethod
     def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-        """ADX (Average Directional Index) - сила тренда"""
+        """ADX (Average Directional Index) - сила тренда. Каноническое имя: adx"""
         if USE_PANDAS_TA:
             adx_df = ta.adx(df["high"], df["low"], df["close"], length=period)
             df = pd.concat([df, adx_df], axis=1)
+            
+            # Нормализовать имена из pandas_ta (может быть ADX_14, DI+_14, DI-_14)
+            if f"ADX_{period}" in df.columns and "adx" not in df.columns:
+                df["adx"] = df[f"ADX_{period}"]
+                df = df.drop(columns=[f"ADX_{period}"])
+            
+            if f"DI+_{period}" in df.columns and "dmp" not in df.columns:
+                df["dmp"] = df[f"DI+_{period}"]
+                df = df.drop(columns=[f"DI+_{period}"])
+            
+            if f"DI-_{period}" in df.columns and "dmn" not in df.columns:
+                df["dmn"] = df[f"DI-_{period}"]
+                df = df.drop(columns=[f"DI-_{period}"])
         else:
             high = df["high"].values
             low = df["low"].values
