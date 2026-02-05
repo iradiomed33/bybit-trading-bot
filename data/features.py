@@ -38,6 +38,7 @@ class FeaturePipeline:
         - EMA/SMA на разных периодах
         - Slope EMA (направление)
         - ADX (сила тренда)
+        - RSI (импульс, перепроданность/перекупленность)
         - Market structure (HH/HL, LH/LL)
         """
         logger.debug("Calculating trend features...")
@@ -53,6 +54,9 @@ class FeaturePipeline:
 
         # ADX
         df = self.indicators.calculate_adx(df)
+
+        # RSI (Relative Strength Index) - для импульса и mean reversion
+        df = self.indicators.calculate_rsi(df)
 
         # Market structure
         df = self.indicators.detect_market_structure(df)
