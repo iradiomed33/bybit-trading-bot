@@ -7,13 +7,16 @@ Trading Bot: главный класс для paper и live режимов.
 - Strategies + Meta-layer
 - Risk engine
 - Execution engine
+- Instrument rules (price/qty normalization)
 """
 
 import time
 from typing import Dict, Any, Optional
+from decimal import Decimal
 from storage.database import Database
 from exchange.market_data import MarketDataClient
 from exchange.account import AccountClient
+from exchange.instruments import InstrumentsManager, normalize_order
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
@@ -54,6 +57,17 @@ class TradingBot:
         self.db = Database()
         self.market_client = MarketDataClient(testnet=testnet)
         self.account_client = AccountClient(testnet=testnet)
+
+        # Инициализируем менеджер инструментов для нормализации ордеров
+        if mode == "live":
+            from exchange.base_client import BybitRestClient
+            rest_client = BybitRestClient(testnet=testnet)
+            self.instruments_manager = InstrumentsManager(rest_client, category="linear")
+            # Загружаем информацию об инструментах при старте
+            if not self.instruments_manager.load_instruments():
+                logger.warning("Failed to load instruments info")
+        else:
+            self.instruments_manager = None
 
         self.pipeline = FeaturePipeline()
         self.meta_layer = MetaLayer(strategies)
@@ -377,11 +391,34 @@ class TradingBot:
                     logger.warning("Position size too small, skipping trade")
                     return
 
-                # 3. Проверяем риск-лимиты
+                # 3. Нормализуем ордер согласно instrument rules (tickSize, qtyStep, минималы)
+                logger.debug(f"Normalizing order: price={signal['entry_price']}, qty={qty}")
+                normalized_price, normalized_qty, is_valid, norm_message = normalize_order(
+                    self.instruments_manager,
+                    self.symbol,
+                    signal["entry_price"],
+                    qty,
+                )
+
+                if not is_valid:
+                    logger.warning(f"Order normalization failed: {norm_message}")
+                    return
+
+                # Логируем нормализованные значения для отладки
+                if float(normalized_price) != signal["entry_price"] or float(normalized_qty) != qty:
+                    logger.info(
+                        f"Order normalized: "
+                        f"price {signal['entry_price']} → {normalized_price}, "
+                        f"qty {qty} → {normalized_qty}"
+                    )
+                else:
+                    logger.debug("Order already normalized correctly")
+
+                # 4. Проверяем риск-лимиты
                 proposed_trade = {
                     "symbol": self.symbol,
-                    "size": qty,
-                    "value": qty * signal["entry_price"],
+                    "size": float(normalized_qty),
+                    "value": float(normalized_qty * normalized_price),
                 }
                 
                 limits_check = self.risk_limits.check_limits(
@@ -393,14 +430,14 @@ class TradingBot:
                     logger.warning(f"Trade rejected by risk limits: {limits_check.get('violations')}")
                     return
 
-                # 4. Выставляем ордер
+                # 5. Выставляем ордер с нормализованными значениями
                 side = "Buy" if signal["signal"] == "long" else "Sell"
                 order_result = self.order_manager.create_order(
                     category="linear",
                     symbol=self.symbol,
                     side=side,
                     order_type="Market",
-                    qty=qty,
+                    qty=float(normalized_qty),  # Используем нормализованное количество
                     order_link_id=f"bot_{int(time.time() * 1000)}",
                 )
 
@@ -408,29 +445,31 @@ class TradingBot:
                     order_id = order_result.get("result", {}).get("orderId")
                     logger.info(f"[LIVE] Order placed: {order_id}")
 
-                    # 5. Регистрируем позицию для сопровождения
+                    # 6. Регистрируем позицию для сопровождения
                     self.position_manager.register_position(
                         symbol=self.symbol,
                         side=side,
-                        entry_price=signal["entry_price"],
-                        size=qty,
+                        entry_price=float(normalized_price),  # Используем нормализованную цену
+                        size=float(normalized_qty),  # Используем нормализованное количество
                         stop_loss=signal["stop_loss"],
                         take_profit=signal.get("take_profit"),
                     )
 
-                    # 6. Обновляем счётчик сделок
+                    # 7. Обновляем счётчик сделок
                     self.risk_limits.increment_trade_count()
 
-                    # 7. Сохраняем сигнал в БД
+                    # 8. Сохраняем сигнал в БД
                     self.db.save_signal(
                         strategy=signal.get("strategy", "Unknown"),
                         symbol=self.symbol,
                         signal_type=signal["signal"],
-                        price=signal["entry_price"],
+                        price=float(normalized_price),  # Сохраняем нормализованную цену
                         metadata=signal,
                     )
                     
-                    logger.info(f"Trade executed successfully: {side} {qty} @ {signal['entry_price']}")
+                    logger.info(
+                        f"Trade executed successfully: {side} {normalized_qty} @ {normalized_price}"
+                    )
                 else:
                     logger.error(f"Failed to place order: {order_result}")
 

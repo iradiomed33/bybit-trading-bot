@@ -1,0 +1,15 @@
+B2: Fix Bybit v5 signature implementation and add comprehensive tests
+
+Key changes:
+- Separated sign_request() function with GET vs POST differentiation
+- GET: Signs sorted query params (URL-encoded string)
+- POST/PUT/DELETE: Signs raw JSON body (compact JSON without spaces)
+- Updated _request() to use new signature function correctly
+- Fixed bug: POST was previously signing query string instead of body
+
+New tests:
+- test_signature.py: 16 tests covering signature generation and validation
+- test_private_api.py: 10 tests covering private endpoints and error handling
+- All 26 new tests passing
+
+This fixes the "invalid signature" errors that would occur on private API calls.
