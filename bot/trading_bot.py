@@ -29,6 +29,7 @@ from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
 from risk.advanced_risk_limits import AdvancedRiskLimits, RiskLimitsConfig, RiskDecision
+from risk.volatility_position_sizer import VolatilityPositionSizer, VolatilityPositionSizerConfig
 from execution import OrderManager, PositionManager
 from utils import retry_api_call
 from logger import setup_logger
@@ -127,6 +128,22 @@ class TradingBot:
 
         # Risk
         self.position_sizer = PositionSizer()
+        
+        # Volatility-scaled Position Sizer (D3)
+        if mode == "live":
+            volatility_config = VolatilityPositionSizerConfig(
+                risk_percent=Decimal("1.0"),      # 1% risk per trade
+                atr_multiplier=Decimal("2.0"),    # 2x ATR for SL distance
+                min_position_size=Decimal("0.00001"),
+                max_position_size=Decimal("100.0"),
+                use_percent_fallback=True,
+                percent_fallback=Decimal("5.0"),
+            )
+            self.volatility_position_sizer = VolatilityPositionSizer(volatility_config)
+            logger.info(f"Volatility position sizer initialized (D3)")
+        else:
+            self.volatility_position_sizer = None
+        
         self.risk_limits = RiskLimits(self.db)
         self.circuit_breaker = CircuitBreaker()
         self.kill_switch = KillSwitch(self.db)
@@ -606,19 +623,44 @@ class TradingBot:
                         # TODO: Implement FLIP logic (close current, open opposite)
                         return
 
-                # 2. Расчитаем размер позиции
-                position_info = self.position_sizer.calculate_position_size(
-                    account_balance=account_balance,
-                    entry_price=signal["entry_price"],
-                    stop_loss_price=signal["stop_loss"],
-                    side="Buy" if signal["signal"] == "long" else "Sell",
-                )
+                # 2. Расчитаем размер позиции (D3: используем volatility-scaled sizing)
+                qty = None
+                
+                # Try volatility-scaled sizer first (D3)
+                if self.mode == "live" and self.volatility_position_sizer:
+                    atr = signal.get("atr", None)
+                    if atr:
+                        atr_decimal = Decimal(str(atr))
+                        try:
+                            qty_vol, details_vol = self.volatility_position_sizer.calculate_position_size(
+                                account=Decimal(str(account_balance)),
+                                entry_price=Decimal(str(signal["entry_price"])),
+                                atr=atr_decimal,
+                                signal=signal.get("signal", "long")
+                            )
+                            qty = qty_vol
+                            logger.info(
+                                f"Volatility-scaled sizing: ATR={atr:.2f}, "
+                                f"Risk=${details_vol['risk_usd']:.2f}, Qty={float(qty):.6f}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Volatility sizing failed: {e}, falling back to legacy sizer")
+                            qty = None
+                
+                # Fallback to legacy sizer
+                if qty is None:
+                    position_info = self.position_sizer.calculate_position_size(
+                        account_balance=account_balance,
+                        entry_price=signal["entry_price"],
+                        stop_loss_price=signal["stop_loss"],
+                        side="Buy" if signal["signal"] == "long" else "Sell",
+                    )
 
-                if not position_info.get("success", False):
-                    logger.warning(f"Position sizing failed: {position_info.get('error')}")
-                    return
+                    if not position_info.get("success", False):
+                        logger.warning(f"Position sizing failed: {position_info.get('error')}")
+                        return
 
-                qty = position_info.get("position_size", 0)
+                    qty = position_info.get("position_size", 0)
 
                 if qty <= 0:
                     logger.warning("Position size too small, skipping trade")
