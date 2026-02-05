@@ -60,6 +60,8 @@ def main():
         print("  backtest   - Run backtest on historical data")
         print("  paper      - Run paper trading (simulation)")
         print("  live       - Run live trading (REAL MONEY)")
+        print("\nEmergency:")
+        print("  kill       - Activate emergency kill switch (closes all positions)")
         print("\nManagement:")
         print("  config     - Manage bot configuration")
         print("  reset-kill-switch - Reset emergency stop flag after crash")
@@ -89,6 +91,8 @@ def main():
         sys.exit(paper_command())
     elif command == "live":
         sys.exit(live_command())
+    elif command == "kill":
+        sys.exit(kill_command())
     elif command == "reset-kill-switch":
         sys.exit(reset_kill_switch())
     elif command == "config":
@@ -861,6 +865,78 @@ def reset_kill_switch():
 
     except Exception as e:
         logger.error(f"Failed to reset kill switch: {e}", exc_info=True)
+        return 1
+
+
+def kill_command():
+    """Активация kill switch - аварийное закрытие всех позиций и отмена ордеров"""
+    logger.error("=" * 80)
+    logger.error("EMERGENCY KILL SWITCH ACTIVATION")
+    logger.error("=" * 80)
+    logger.error("⚠️  This will IMMEDIATELY close ALL open positions and cancel ALL orders!")
+    logger.error("⚠️  This operation CANNOT be undone!")
+    logger.error("=" * 80)
+
+    confirmation = input("\nType 'KILL' to activate emergency shutdown: ").strip()
+
+    if confirmation != "KILL":
+        logger.info("Kill switch activation cancelled")
+        return 0
+
+    try:
+        from exchange.base_client import BybitRestClient
+        from execution.kill_switch import KillSwitchManager
+        from config import Config
+
+        testnet = Config.ENVIRONMENT == "testnet"
+        client = BybitRestClient(testnet=testnet)
+        kill_switch = KillSwitchManager(client)
+
+        # Activate kill switch
+        logger.error("Activating emergency kill switch...")
+        result = kill_switch.activate(
+            reason="Manual emergency activation via CLI",
+            cancel_orders=True,
+            close_positions=True
+        )
+
+        # Report results
+        logger.error("=" * 80)
+        logger.error("KILL SWITCH RESULTS")
+        logger.error("=" * 80)
+        logger.error(f"Status: {'SUCCESS' if result['success'] else 'FAILED'}")
+        logger.error(f"Timestamp: {result['timestamp']}")
+        logger.error(f"Orders Cancelled: {result['orders_cancelled']}")
+        logger.error(f"Positions Closed: {result['positions_closed']}")
+
+        if result['errors']:
+            logger.error(f"\nErrors ({len(result['errors'])}):")
+            for error in result['errors']:
+                logger.error(f"  - {error}")
+
+        # Get final status
+        status = kill_switch.get_status()
+        logger.error("\n" + "=" * 80)
+        logger.error("FINAL STATUS")
+        logger.error("=" * 80)
+        logger.error(f"Trading Halted: {status['is_halted']}")
+        logger.error(f"Status: {status['status'].upper()}")
+        logger.error(f"Total Orders Cancelled: {status['orders_cancelled']}")
+        logger.error(f"Total Positions Closed: {status['positions_closed']}")
+        logger.error("=" * 80)
+
+        if result['success']:
+            logger.error("\n✅ EMERGENCY SHUTDOWN COMPLETE")
+            logger.error("All positions are closed and no further trading can occur.")
+            logger.error("To recover, use: python cli.py reset-kill-switch")
+            return 0
+        else:
+            logger.error("\n❌ EMERGENCY SHUTDOWN ENCOUNTERED ERRORS")
+            logger.error("Please verify all positions are closed manually.")
+            return 1
+
+    except Exception as e:
+        logger.error(f"❌ Kill switch activation failed: {e}", exc_info=True)
         return 1
 
 

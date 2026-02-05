@@ -24,6 +24,7 @@ from execution.position_signal_handler import (
     SignalActionConfig,
     SignalAction,
 )
+from execution.kill_switch import KillSwitchManager
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
@@ -128,6 +129,15 @@ class TradingBot:
         self.risk_limits = RiskLimits(self.db)
         self.circuit_breaker = CircuitBreaker()
         self.kill_switch = KillSwitch(self.db)
+
+        # Kill Switch Manager (для аварийного закрытия)
+        if mode == "live":
+            from exchange.base_client import BybitRestClient
+            rest_client = BybitRestClient(testnet=testnet)
+            self.kill_switch_manager = KillSwitchManager(rest_client)
+            logger.info("Kill switch manager initialized for emergency shutdown")
+        else:
+            self.kill_switch_manager = None
 
         # Execution
         if mode == "live":
@@ -255,7 +265,19 @@ class TradingBot:
             self.stop()
         except Exception as e:
             logger.error(f"Critical error in main loop: {e}", exc_info=True)
-            self.kill_switch.activate(f"Critical error: {str(e)}")
+            
+            # Activate kill switch for emergency shutdown
+            if self.mode == "live" and self.kill_switch_manager:
+                logger.critical("Activating emergency kill switch due to critical error!")
+                result = self.kill_switch_manager.activate(f"Critical error: {str(e)}")
+                if result["success"]:
+                    logger.critical(
+                        f"Emergency shutdown complete: {result['orders_cancelled']} orders cancelled, "
+                        f"{result['positions_closed']} positions closed"
+                    )
+            else:
+                self.kill_switch.activate(f"Critical error: {str(e)}")
+            
             self.stop()
 
     def _fetch_market_data(self) -> Optional[Dict[str, Any]]:
