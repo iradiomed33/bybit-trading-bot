@@ -11,6 +11,7 @@ import time
 import hmac
 import hashlib
 import requests
+import json
 from typing import Optional, Dict, Any
 from logger import setup_logger
 from config import Config
@@ -48,23 +49,52 @@ class BybitRestClient:
 
         logger.info(f"BybitRestClient initialized: {self.base_url}")
 
-    def _generate_signature(self, params: str, timestamp: str) -> str:
+    def sign_request(
+        self,
+        method: str,
+        path: str,
+        query_string: str = "",
+        body_string: str = "",
+        timestamp: str = "",
+    ) -> str:
         """
-        Генерирует HMAC SHA256 подпись для приватных запросов.
+        Подпись запроса согласно Bybit V5 authentication spec.
+
+        Bybit V5 требует разные форматы подписи для GET и POST:
+        - GET: Подпись создается из sorted query params
+        - POST/PUT/DELETE: Подпись создается из raw JSON body string
 
         Args:
-            params: URL-encoded параметры запроса
-            timestamp: Timestamp в миллисекундах
+            method: HTTP метод (GET, POST, PUT, DELETE)
+            path: API путь, например "/v5/account/wallet-balance"
+            query_string: Для GET - sorted query params как "k1=v1&k2=v2"
+            body_string: Для POST - raw JSON body как '{"k1":"v1","k2":"v2"}'
+            timestamp: Unix timestamp в миллисекундах (используется из _sync_server_time)
 
         Returns:
-            Hex подпись
+            Hex-закодированная HMAC-SHA256 подпись
+
+        Example (GET):
+            query = "accountType=UNIFIED&coin=BTC"
+            sig = sign_request("GET", "/v5/account/wallet-balance", query_string=query, ...)
+
+        Example (POST):
+            body = '{"symbol":"BTCUSDT","side":"Buy"}'
+            sig = sign_request("POST", "/v5/order/create", body_string=body, ...)
 
         Docs: https://bybit-exchange.github.io/docs/v5/guide#authentication
         """
-        # V5 подпись: timestamp + api_key + recv_window + params
         recv_window = "5000"
-        param_str = f"{timestamp}{self.api_key}{recv_window}{params}"
 
+        # Выбираем параметры для подписи в зависимости от метода
+        if method.upper() == "GET":
+            # GET: подпись из sorted query params
+            param_str = f"{timestamp}{self.api_key}{recv_window}{query_string}"
+        else:
+            # POST/PUT/DELETE: подпись из raw JSON body
+            param_str = f"{timestamp}{self.api_key}{recv_window}{body_string}"
+
+        # Создаем HMAC-SHA256 подпись
         signature = hmac.new(
             self.api_secret.encode("utf-8"),
             param_str.encode("utf-8"),
@@ -132,9 +162,25 @@ class BybitRestClient:
             timestamp = str(int(time.time() * 1000) + self._time_offset)
             recv_window = "5000"
 
-            # Сортируем параметры для подписи
-            sorted_params = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-            signature = self._generate_signature(sorted_params, timestamp)
+            # Для GET и POST используем разные форматы подписи
+            if method.upper() == "GET":
+                # GET: сортируем параметры в URL-encoded строку
+                query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+                signature = self.sign_request(
+                    method=method,
+                    path=endpoint,
+                    query_string=query_string,
+                    timestamp=timestamp,
+                )
+            else:
+                # POST/PUT/DELETE: используем raw JSON body для подписи
+                body_string = json.dumps(params, separators=(',', ':'))
+                signature = self.sign_request(
+                    method=method,
+                    path=endpoint,
+                    body_string=body_string,
+                    timestamp=timestamp,
+                )
 
             headers.update(
                 {
