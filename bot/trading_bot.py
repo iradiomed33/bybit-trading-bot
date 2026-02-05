@@ -19,6 +19,11 @@ from exchange.account import AccountClient
 from exchange.instruments import InstrumentsManager, normalize_order
 from storage.position_state import PositionStateManager
 from execution.stop_loss_tp_manager import StopLossTakeProfitManager, StopLossTPConfig
+from execution.position_signal_handler import (
+    PositionSignalHandler,
+    SignalActionConfig,
+    SignalAction,
+)
 from data.features import FeaturePipeline
 from strategy.meta_layer import MetaLayer
 from risk import PositionSizer, RiskLimits, CircuitBreaker, KillSwitch
@@ -94,6 +99,26 @@ class TradingBot:
             logger.info(f"SL/TP manager initialized with ATR-based levels")
         else:
             self.sl_tp_manager = None
+
+        # Инициализируем обработчик сигналов для позиций (flip/add/ignore)
+        if mode == "live":
+            # Конфигурируем правила для обработки сигналов
+            signal_action_config = SignalActionConfig(
+                default_action=SignalAction.IGNORE,  # По умолчанию игнорируем конфликты
+                long_signal_action=SignalAction.IGNORE,
+                short_signal_action=SignalAction.IGNORE,
+                # Раскомментируйте для разрешения пирамидинга:
+                # long_signal_action=SignalAction.ADD,
+                # short_signal_action=SignalAction.ADD,
+                # max_pyramid_levels=3,
+                # Или для flip:
+                # long_signal_action=SignalAction.FLIP,
+                # short_signal_action=SignalAction.FLIP,
+            )
+            self.signal_handler = PositionSignalHandler(signal_action_config)
+            logger.info(f"Signal handler initialized with action config")
+        else:
+            self.signal_handler = None
 
         self.pipeline = FeaturePipeline()
         self.meta_layer = MetaLayer(strategies)
@@ -435,14 +460,6 @@ class TradingBot:
         else:
             # Live mode: реально открываем позицию
             try:
-                # 0. Проверяем есть ли уже открытая позиция (предотвращаем дубликаты)
-                if self.position_state_manager.has_position():
-                    logger.warning(
-                        f"Position already open for {self.symbol}. "
-                        f"Skipping new trade signal to prevent duplicate positions."
-                    )
-                    return
-
                 # 1. Получаем баланс аккаунта
                 balance_result = self.account_client.get_wallet_balance(coin="USDT")
                 account_balance = balance_result.get("balance", 0)
@@ -450,6 +467,49 @@ class TradingBot:
                 if account_balance <= 0:
                     logger.error(f"Invalid account balance: {account_balance}")
                     return
+
+                # 0. Проверяем текущую позицию и определяем действие (flip/add/ignore)
+                current_pos = self.position_state_manager.get_position() if self.position_state_manager.has_position() else None
+                
+                if current_pos:
+                    # Есть открытая позиция - проверяем что делать с новым сигналом
+                    signal_action_result = self.signal_handler.handle_signal(
+                        current_position={
+                            "symbol": current_pos.symbol,
+                            "side": current_pos.side,
+                            "qty": current_pos.qty,
+                            "entry_price": current_pos.entry_price,
+                            "pyramid_level": 1,  # TODO: track pyramid level in position state
+                        },
+                        new_signal=signal,
+                        current_price=Decimal(str(signal.get("entry_price", 0))),
+                        account_balance=Decimal(str(account_balance)),
+                    )
+
+                    if not signal_action_result.success:
+                        logger.warning(f"Signal rejected: {signal_action_result.message}")
+                        signal_logger.log_debug_info(
+                            category="signal_rejected",
+                            symbol=self.symbol,
+                            reason=signal_action_result.message,
+                        )
+                        return
+
+                    action = signal_action_result.action_taken
+
+                    if action == SignalAction.IGNORE:
+                        logger.warning(f"Signal IGNORED: {signal_action_result.message}")
+                        return
+
+                    elif action == SignalAction.ADD:
+                        logger.info(f"ADD (pyramid) action: {signal_action_result.message}")
+                        # TODO: Implement ADD logic
+                        return
+
+                    elif action == SignalAction.FLIP:
+                        logger.info(f"FLIP action: {signal_action_result.message}")
+                        # TODO: Implement FLIP logic (close current, open opposite)
+                        return
 
                 # 2. Расчитаем размер позиции
                 position_info = self.position_sizer.calculate_position_size(
