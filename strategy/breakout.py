@@ -19,15 +19,22 @@ logger = setup_logger(__name__)
 class BreakoutStrategy(BaseStrategy):
     """Стратегия пробоя диапазона с фильтром ликвидности"""
 
-    def __init__(self, bb_width_threshold: float = 0.02, min_volume_zscore: float = 1.5):
+    def __init__(
+        self,
+        bb_width_threshold: float = 0.02,
+        min_volume_zscore: float = 1.5,
+        min_atr_percent_expansion: float = 1.2,  # ATR% должен быть > медианы на 20%
+    ):
         """
         Args:
             bb_width_threshold: Макс. ширина BB для "узкого" диапазона
             min_volume_zscore: Мин. z-score объёма для подтверждения
+            min_atr_percent_expansion: Минимальный коэффициент расширения ATR%
         """
         super().__init__("Breakout")
         self.bb_width_threshold = bb_width_threshold
         self.min_volume_zscore = min_volume_zscore
+        self.min_atr_percent_expansion = min_atr_percent_expansion
 
     def generate_signal(
         self, df: pd.DataFrame, features: Dict[str, Any]
@@ -48,6 +55,7 @@ class BreakoutStrategy(BaseStrategy):
         # 1. Проверка узкого диапазона
         bb_width = latest.get("bb_width", 1.0)
         if bb_width > self.bb_width_threshold:
+            logger.debug(f"{self.name}: Rejected - BB width too wide ({bb_width:.3f})")
             return None  # Диапазон слишком широкий
 
         # 2. Проверка пробоя
@@ -67,56 +75,100 @@ class BreakoutStrategy(BaseStrategy):
         if prev_close <= prev_bb_upper and close > bb_upper:
             # 3. Подтверждение объёмом
             volume_zscore = latest.get("volume_zscore", 0)
-            if volume_zscore >= self.min_volume_zscore:
-                # 4. Фильтр ликвидности (из стакана)
-                spread_percent = features.get("spread_percent", 100)
-                if spread_percent < 0.5:  # Спред < 0.5%
-                    atr = latest.get("atr", 0)
-                    stop_loss = bb_upper - (1.0 * atr)
-                    take_profit = close + (2.5 * atr)
+            if volume_zscore < self.min_volume_zscore:
+                logger.debug(
+                    f"{self.name}: Rejected - volume_low (zscore={volume_zscore:.2f})"
+                )
+                return None
 
-                    return {
-                        "signal": "long",
-                        "confidence": 0.75,
-                        "entry_price": close,
-                        "stop_loss": stop_loss,
-                        "take_profit": take_profit,
-                        "reason": (
-                            f"Breakout long: BB width={bb_width:.3f}, "
-                            f"volume={volume_zscore:.1f}"
-                        ),
-                        "metadata": {
-                            "bb_width": bb_width,
-                            "volume_zscore": volume_zscore,
-                            "spread_percent": spread_percent,
-                        },
-                    }
+            # 4. Фильтр расширения волатильности (ATR%)
+            atr_percent = latest.get("atr_percent", 0)
+            atr_percent_ma = df["atr_percent"].tail(20).mean()  # Средний ATR% за 20 свечей
+            
+            if atr_percent < (atr_percent_ma * self.min_atr_percent_expansion):
+                logger.debug(
+                    f"{self.name}: Rejected - vol_not_expanding "
+                    f"(atr%={atr_percent:.3f} < median*{self.min_atr_percent_expansion}={atr_percent_ma * self.min_atr_percent_expansion:.3f})"
+                )
+                return None
+
+            # 5. Фильтр ликвидности (из стакана)
+            spread_percent = features.get("spread_percent", 100)
+            if spread_percent >= 0.5:  # Спред >= 0.5%
+                logger.debug(
+                    f"{self.name}: Rejected - spread_too_wide ({spread_percent:.3f}%)"
+                )
+                return None
+
+            atr = latest.get("atr", 0)
+            stop_loss = bb_upper - (1.0 * atr)
+            take_profit = close + (2.5 * atr)
+
+            return {
+                "signal": "long",
+                "confidence": 0.75,
+                "entry_price": close,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "reason": (
+                    f"Breakout long: BB width={bb_width:.3f}, "
+                    f"volume={volume_zscore:.1f}, atr%={atr_percent:.3f}"
+                ),
+                "metadata": {
+                    "bb_width": bb_width,
+                    "volume_zscore": volume_zscore,
+                    "atr_percent": atr_percent,
+                    "spread_percent": spread_percent,
+                },
+            }
 
         # Пробой вниз
         if prev_close >= prev_bb_lower and close < bb_lower:
             volume_zscore = latest.get("volume_zscore", 0)
-            if volume_zscore >= self.min_volume_zscore:
-                spread_percent = features.get("spread_percent", 100)
-                if spread_percent < 0.5:
-                    atr = latest.get("atr", 0)
-                    stop_loss = bb_lower + (1.0 * atr)
-                    take_profit = close - (2.5 * atr)
+            if volume_zscore < self.min_volume_zscore:
+                logger.debug(
+                    f"{self.name}: Rejected - volume_low (zscore={volume_zscore:.2f})"
+                )
+                return None
 
-                    return {
-                        "signal": "short",
-                        "confidence": 0.75,
-                        "entry_price": close,
-                        "stop_loss": stop_loss,
-                        "take_profit": take_profit,
-                        "reason": (
-                            f"Breakout short: BB width={bb_width:.3f}, "
-                            f"volume={volume_zscore:.1f}"
-                        ),
-                        "metadata": {
-                            "bb_width": bb_width,
-                            "volume_zscore": volume_zscore,
-                            "spread_percent": spread_percent,
-                        },
-                    }
+            # Фильтр расширения волатильности
+            atr_percent = latest.get("atr_percent", 0)
+            atr_percent_ma = df["atr_percent"].tail(20).mean()
+            
+            if atr_percent < (atr_percent_ma * self.min_atr_percent_expansion):
+                logger.debug(
+                    f"{self.name}: Rejected - vol_not_expanding "
+                    f"(atr%={atr_percent:.3f} < median*{self.min_atr_percent_expansion}={atr_percent_ma * self.min_atr_percent_expansion:.3f})"
+                )
+                return None
+
+            spread_percent = features.get("spread_percent", 100)
+            if spread_percent >= 0.5:
+                logger.debug(
+                    f"{self.name}: Rejected - spread_too_wide ({spread_percent:.3f}%)"
+                )
+                return None
+
+            atr = latest.get("atr", 0)
+            stop_loss = bb_lower + (1.0 * atr)
+            take_profit = close - (2.5 * atr)
+
+            return {
+                "signal": "short",
+                "confidence": 0.75,
+                "entry_price": close,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "reason": (
+                    f"Breakout short: BB width={bb_width:.3f}, "
+                    f"volume={volume_zscore:.1f}, atr%={atr_percent:.3f}"
+                ),
+                "metadata": {
+                    "bb_width": bb_width,
+                    "volume_zscore": volume_zscore,
+                    "atr_percent": atr_percent,
+                    "spread_percent": spread_percent,
+                },
+            }
 
         return None
