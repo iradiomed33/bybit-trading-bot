@@ -215,7 +215,15 @@ class TradingBot:
 
         if mode == "live":
 
-            self.kill_switch_manager = KillSwitchManager(rest_client)
+            # Получаем список разрешённых символов из конфигурации
+            allowed_symbols = [symbol] if symbol else []  # Используем текущий symbol из конфига
+
+            self.kill_switch_manager = KillSwitchManager(
+                client=rest_client,
+                order_manager=self.order_manager,
+                db=self.db,
+                allowed_symbols=allowed_symbols,
+            )
 
             logger.info("Kill switch manager initialized for emergency shutdown")
 

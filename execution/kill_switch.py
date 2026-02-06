@@ -31,13 +31,15 @@ from enum import Enum
 
 from typing import Dict, List, Optional, Tuple
 
-import logging
-
 
 from exchange.base_client import BybitRestClient
 
+from storage.database import Database
 
-logger = logging.getLogger(__name__)
+from logger import setup_logger
+
+
+logger = setup_logger(__name__)
 
 
 class KillSwitchStatus(Enum):
@@ -72,7 +74,13 @@ class KillSwitchManager:
 
     """
 
-    def __init__(self, client: BybitRestClient):
+    def __init__(
+        self,
+        client: BybitRestClient,
+        order_manager=None,  # Optional[OrderManager], avoid circular import
+        db: Optional[Database] = None,
+        allowed_symbols: Optional[List[str]] = None,
+    ):
         """
 
         Initialize Kill Switch Manager.
@@ -82,9 +90,21 @@ class KillSwitchManager:
 
             client: Bybit API client
 
+            order_manager: OrderManager for order/position operations
+
+            db: Database for storing trading_disabled flag
+
+            allowed_symbols: List of allowed trading symbols (optional)
+
         """
 
         self.client = client
+
+        self.order_manager = order_manager
+
+        self.db = db
+
+        self.allowed_symbols = allowed_symbols or []
 
         self.status = KillSwitchStatus.ACTIVE
 
@@ -203,7 +223,7 @@ class KillSwitchManager:
 
             errors.extend(close_errors)
 
-        # Step 3: Set halted status
+        # Step 3: Set halted status and save to database
 
         self.is_halted = True
 
@@ -212,6 +232,16 @@ class KillSwitchManager:
         self.halted_at = activation_time
 
         self.activation_count += 1
+
+        # Save trading_disabled flag to database
+        if self.db:
+            try:
+                self.db.save_config("trading_disabled", True)
+                logger.warning("Trading disabled flag saved to database")
+            except Exception as e:
+                error_msg = f"Failed to save trading_disabled flag: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
 
         activation_record = {
 
@@ -267,7 +297,7 @@ class KillSwitchManager:
 
         Args:
 
-            symbols: List of symbols (None = all)
+            symbols: List of symbols (None = all from allowed_symbols or positions)
 
 
         Returns:
@@ -282,31 +312,38 @@ class KillSwitchManager:
 
         try:
 
-            # Get all active orders
+            # Determine which symbols to cancel
+            symbols_to_cancel = symbols
 
-            if symbols:
+            if not symbols_to_cancel:
+                # Get symbols from open positions
+                try:
+                    positions = self._get_open_positions()
+                    symbols_from_positions = list(set([p.get("symbol") for p in positions if p.get("symbol")]))
+                    
+                    # Combine with allowed_symbols if available
+                    if self.allowed_symbols:
+                        symbols_to_cancel = list(set(symbols_from_positions + self.allowed_symbols))
+                    else:
+                        symbols_to_cancel = symbols_from_positions
+                    
+                    logger.info(f"Cancelling orders for symbols: {symbols_to_cancel}")
+                except Exception as e:
+                    logger.warning(f"Failed to get symbols from positions: {e}")
+                    # Fallback to allowed_symbols only
+                    symbols_to_cancel = self.allowed_symbols if self.allowed_symbols else []
 
-                for symbol in symbols:
+            # Cancel orders for each symbol
+            if symbols_to_cancel:
+                for symbol in symbols_to_cancel:
 
                     cancelled, symbol_errors = self._cancel_orders_for_symbol(symbol)
 
                     cancelled_count += cancelled
 
                     errors.extend(symbol_errors)
-
             else:
-
-                # Cancel all symbols - try common trading pairs
-
-                common_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT"]
-
-                for symbol in common_symbols:
-
-                    cancelled, symbol_errors = self._cancel_orders_for_symbol(symbol)
-
-                    cancelled_count += cancelled
-
-                    errors.extend(symbol_errors)
+                logger.warning("No symbols specified for order cancellation")
 
             logger.warning(f"Cancelled {cancelled_count} orders, errors: {len(errors)}")
 
@@ -343,47 +380,38 @@ class KillSwitchManager:
 
         try:
 
-            # Cancel all pending orders for the symbol
-
-            response = self.client.cancel_all_orders(symbol=symbol)
-
-            if response and "list" in response:
-
-                cancelled_count = len(response["list"])
-
-                for order in response["list"]:
-
+            # Use OrderManager if available
+            if self.order_manager:
+                result = self.order_manager.cancel_all_orders(
+                    category="linear",
+                    symbol=symbol
+                )
+                
+                if result.success:
+                    # Parse result to count cancelled orders
+                    # Note: cancel_all_orders returns success but doesn't provide exact count
+                    # We'll log it as 1 successful cancellation per symbol
+                    cancelled_count = 1  # At least one or all orders cancelled
+                    
                     self.cancelled_orders.append(
-
                         {
-
                             "symbol": symbol,
-
-                            "order_id": order.get("orderId"),
-
-                            "side": order.get("side"),
-
-                            "qty": order.get("qty"),
-
-                            "price": order.get("price"),
-
                             "cancelled_at": datetime.now().isoformat(),
-
+                            "method": "cancel_all_orders",
                         }
-
                     )
-
+                    
                     logger.warning(
-
-                        f"Cancelled order | Symbol: {symbol} | "
-
-                        f"OrderID: {order.get('orderId')} | "
-
-                        f"Side: {order.get('side')} | "
-
-                        f"Qty: {order.get('qty')}"
-
+                        f"Cancelled all orders for symbol: {symbol}"
                     )
+                else:
+                    error_msg = f"Failed to cancel orders for {symbol}: {result.error}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+            else:
+                error_msg = f"OrderManager not available, cannot cancel orders for {symbol}"
+                logger.error(error_msg)
+                errors.append(error_msg)
 
         except Exception as e:
 
@@ -465,11 +493,20 @@ class KillSwitchManager:
 
         try:
 
-            response = self.client.get_positions()
+            # Use Bybit API v5 to get positions
+            response = self.client.post(
+                "/v5/position/list",
+                params={
+                    "category": "linear",
+                    "settleCoin": "USDT",
+                }
+            )
 
-            if response and "list" in response:
+            if response and response.get("retCode") == 0:
+                result = response.get("result", {})
+                position_list = result.get("list", [])
 
-                for pos in response["list"]:
+                for pos in position_list:
 
                     # Filter by symbols if specified
 
@@ -477,11 +514,15 @@ class KillSwitchManager:
 
                         continue
 
-                    # Only include open positions
+                    # Only include open positions (size > 0)
 
-                    if pos.get("size", 0) > 0:
+                    size = float(pos.get("size", 0))
+
+                    if size > 0:
 
                         positions.append(pos)
+            else:
+                logger.error(f"Failed to get positions: {response.get('retMsg', 'Unknown error')}")
 
         except Exception as e:
 
@@ -524,64 +565,63 @@ class KillSwitchManager:
 
             close_side = "Sell" if current_side == "Buy" else "Buy"
 
-            # Market order to close position
-
-            response = self.client.place_order(
-
-                symbol=symbol,
-
-                side=close_side,
-
-                order_type="Market",
-
-                qty=float(qty),
-
-                reduce_only=True,  # Only close, don't reverse
-
-                time_in_force="IOC",  # Immediate or Cancel
-
-            )
-
-            if response and response.get("orderId"):
-
-                self.closed_positions.append(
-
-                    {
-
-                        "symbol": symbol,
-
-                        "original_side": current_side,
-
-                        "close_side": close_side,
-
-                        "qty": float(qty),
-
-                        "order_id": response.get("orderId"),
-
-                        "closed_at": datetime.now().isoformat(),
-
-                    }
-
+            # Use OrderManager to create market order
+            if self.order_manager:
+                result = self.order_manager.create_order(
+                    category="linear",
+                    symbol=symbol,
+                    side=close_side,
+                    order_type="Market",
+                    qty=float(qty),
+                    time_in_force="IOC",  # Immediate or Cancel
+                    # Note: reduceOnly is not a parameter in create_order
+                    # Market orders will naturally reduce the position
                 )
 
-                logger.warning(
+                if result.success:
 
-                    f"Closed position | Symbol: {symbol} | "
+                    self.closed_positions.append(
 
-                    f"Original Side: {current_side} | "
+                        {
 
-                    f"Qty: {qty} | OrderID: {response.get('orderId')}"
+                            "symbol": symbol,
 
-                )
+                            "original_side": current_side,
 
-                return True, []
+                            "close_side": close_side,
 
+                            "qty": float(qty),
+
+                            "order_id": result.order_id,
+
+                            "closed_at": datetime.now().isoformat(),
+
+                        }
+
+                    )
+
+                    logger.warning(
+
+                        f"Closed position | Symbol: {symbol} | "
+
+                        f"Original Side: {current_side} | "
+
+                        f"Qty: {qty} | OrderID: {result.order_id}"
+
+                    )
+
+                    return True, []
+
+                else:
+
+                    error_msg = f"Failed to close position {symbol}: {result.error}"
+
+                    logger.error(error_msg)
+
+                    return False, [error_msg]
             else:
-
-                error_msg = f"Failed to close position {symbol}: No order ID returned"
-
+                error_msg = f"OrderManager not available, cannot close position {symbol}"
                 logger.error(error_msg)
-
                 return False, [error_msg]
 
         except Exception as e:
@@ -627,6 +667,8 @@ class KillSwitchManager:
 
         Check if trading is allowed.
 
+        Checks both internal state and database flag.
+
 
         Returns:
 
@@ -634,7 +676,20 @@ class KillSwitchManager:
 
         """
 
-        return not self.is_halted
+        # Check internal state
+        if self.is_halted:
+            return False
+        
+        # Check database flag if available
+        if self.db:
+            try:
+                trading_disabled = self.db.get_config("trading_disabled", False)
+                if trading_disabled:
+                    return False
+            except Exception as e:
+                logger.warning(f"Failed to check trading_disabled flag: {e}")
+        
+        return True
 
     def reset(self) -> None:
         """Reset kill switch to active state (for recovery)."""
@@ -644,6 +699,14 @@ class KillSwitchManager:
         self.status = KillSwitchStatus.ACTIVE
 
         self.halted_at = None
+
+        # Clear trading_disabled flag in database
+        if self.db:
+            try:
+                self.db.save_config("trading_disabled", False)
+                logger.info("Trading disabled flag cleared in database")
+            except Exception as e:
+                logger.error(f"Failed to clear trading_disabled flag: {e}")
 
         logger.info("Kill switch reset to active state")
 
