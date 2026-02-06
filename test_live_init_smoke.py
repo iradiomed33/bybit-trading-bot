@@ -17,30 +17,46 @@ def test_initialization_order():
     print("="*70)
     
     try:
+        import ast
+        import re
+        
         with open('bot/trading_bot.py', 'r') as f:
             content = f.read()
         
-        # Находим позиции создания компонентов
-        order_manager_pos = content.find('self.order_manager = OrderManager')
-        sl_tp_manager_pos = content.find('self.sl_tp_manager = StopLossTakeProfitManager')
+        # Разбиваем на строки для более надёжной проверки
+        lines = content.split('\n')
         
-        print(f"\n✓ Позиция создания order_manager: {order_manager_pos}")
-        print(f"✓ Позиция создания sl_tp_manager: {sl_tp_manager_pos}")
+        order_manager_line = None
+        sl_tp_manager_line = None
         
-        if order_manager_pos < 0:
+        for i, line in enumerate(lines):
+            # Проверяем присваивание order_manager (игнорируем пробелы)
+            if re.search(r'self\.order_manager\s*=\s*OrderManager', line):
+                if order_manager_line is None:  # Берём первое вхождение
+                    order_manager_line = i
+                    
+            # Проверяем присваивание sl_tp_manager (игнорируем пробелы)
+            if re.search(r'self\.sl_tp_manager\s*=\s*StopLossTakeProfitManager', line):
+                if sl_tp_manager_line is None:  # Берём первое вхождение
+                    sl_tp_manager_line = i
+        
+        print(f"\n✓ Строка создания order_manager: {order_manager_line + 1 if order_manager_line is not None else 'не найдено'}")
+        print(f"✓ Строка создания sl_tp_manager: {sl_tp_manager_line + 1 if sl_tp_manager_line is not None else 'не найдено'}")
+        
+        if order_manager_line is None:
             print("\n❌ ОШИБКА: Не найдено создание order_manager")
             return False
             
-        if sl_tp_manager_pos < 0:
+        if sl_tp_manager_line is None:
             print("\n❌ ОШИБКА: Не найдено создание sl_tp_manager")
             return False
         
-        if order_manager_pos < sl_tp_manager_pos:
+        if order_manager_line < sl_tp_manager_line:
             print("\n✓✓✓ УСПЕХ: order_manager создаётся ПЕРЕД sl_tp_manager")
-            print(f"✓ Разница позиций: {sl_tp_manager_pos - order_manager_pos} символов")
+            print(f"✓ Разница: {sl_tp_manager_line - order_manager_line} строк")
             
             # Проверим также, что rest_client создаётся один раз
-            rest_client_count = content.count('rest_client = BybitRestClient(testnet=testnet)')
+            rest_client_count = len(re.findall(r'rest_client\s*=\s*BybitRestClient\s*\(', content))
             print(f"\n✓ Количество создания rest_client: {rest_client_count}")
             
             if rest_client_count == 1:
