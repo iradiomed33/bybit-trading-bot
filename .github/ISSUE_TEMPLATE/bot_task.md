@@ -1,59 +1,59 @@
 ---
-name: Bot task (A1..VAL-002) with regression mapping
-about: Реализация задачи по боту с обязательной привязкой к REG-ID и тест-планом
+name: Bot Task (с привязкой к регрессу)
+about: Задача для Copilot/разработчика с обязательной привязкой к REG-ID
 title: "[BOT] <кратко: что делаем>"
-labels: ["bot", "qa", "copilot"]
+labels: ["bot", "enhancement"]
 assignees: []
 ---
 
 ## Контекст
-Ссылка на epic/док/обсуждение:  
+Коротко: **что ломает / что улучшаем / почему сейчас не ок**.
+
+## Цель
+Ожидаемое поведение после изменения (1–3 пункта).
+
+## Scope
+**Входит:**
+- ...
+**Не входит:**
 - ...
 
-## Цель (что меняем/добавляем)
-Опиши ожидаемое поведение и почему это нужно.
+## Связанные REG-ID (обязательное)
+Укажите, какие пункты из `docs/qa/regression_bot.md` должны пройти после выполнения задачи:
 
-## Область изменений (scope)
-- Компоненты/модули:
-  - [ ] data / features / strategies / meta / risk / execution / position manager / reports
-- Поведение, которое **не** должно измениться:
-  - ...
-
-## Привязка к регрессу (обязательно)
-Указать REG-ID из `docs/qa/regression_bot.md` (и/или `docs/qa/regression_matrix.md`).
-
-### REG-ID, которые должны **пройти** после PR
+- [ ] REG-...  
 - [ ] REG-...
 
-### REG-ID, которые должен **покрыть/добавить автотестами** этот PR
-- [ ] REG-...
+> Совет: берите REG-ID из `docs/qa/regression_matrix.md`, чтобы сразу понимать тип теста и где его гонять.
 
-> Если подходящего REG-ID нет — добавь новый в `regression_bot.md` и обнови матрицу.
+## Требование к тестам (обязательное)
+Какие проверки должны быть **автоматизированы** и добавлены в репозиторий:
 
-## План тестирования
-Заполни и добавь команды/скрипты.
+- [ ] Unit tests (быстро, детерминированно): `tests/...`
+- [ ] Integration tests (fixtures/paper/backtest короткие): `tests/...`
+- [ ] Testnet checks (manual/workflow_dispatch): приложить артефакты (лог/JSON/скрин openOrders/positions)
 
-| Тип | Что гоняем | Где (CI/nightly/manual) | Команда/Workflow |
-|---|---|---|---|
-| unit | ... | CI | `pytest -q ...` |
-| integration | ... | CI/nightly | `python -m ...` / `pytest -q ...` |
-| testnet | ... | manual | `gh workflow run testnet-e2e.yml` |
+## План реализации (шаги)
+1. ...
+2. ...
+3. ...
 
-## Definition of Done (DoD)
-- [ ] Реализация соответствует цели и контрактам
-- [ ] Добавлены/обновлены автотесты под указанные REG-ID
-- [ ] Логи/причины решений (`signal/confidence/reasons/values`) не деградировали
-- [ ] Все проверки уровня `CI` зелёные
-- [ ] Для `nightly/testnet` приложены артефакты (лог/отчёт/скрин openOrders/positions)
-- [ ] Обновлена документация (`regression_bot.md` / `regression_matrix.md`) при необходимости
+## Acceptance Criteria (DoD)
+- [ ] Реализация завершена
+- [ ] Добавлены/обновлены тесты, покрывающие REG-ID из списка
+- [ ] Все REG-ID из списка **проходят**
+- [ ] CI зелёный (unit + integration)
+- [ ] Для testnet-пунктов приложены артефакты (логи/ответы API)
 
-## Артефакты (приложить ссылками/вставками)
+## Как проверить (локально)
+Пример (подстройте под проект):
+- `pytest -q`
+- `pytest -q tests/regression -k <ID|section>`
+- `python -m app.scripts.paper_run --config ...` (если есть)
+- `python -m app.scripts.backtest --config ...` (если есть)
+- Testnet: `python -m app.scripts.smoke_place_order --testnet ...`
+
+## Артефакты
 - Логи:
-- Отчёт paper/backtest:
-- Сравнение метрик (если применимо):
-- Скрин/JSON Bybit TESTNET (если testnet):
-
-## Риски / углы
-- Возможные флейки:
-- Граничные условия:
-- Rollback план:
+- Отчёты (paper/backtest):
+- Ссылка на PR:
