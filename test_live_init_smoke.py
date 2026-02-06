@@ -56,13 +56,16 @@ def test_initialization_order():
             print(f"✓ Разница: {sl_tp_manager_line - order_manager_line} строк")
             
             # Проверим также, что rest_client создаётся один раз
+            # Примечание: проверяет только паттерн 'rest_client = BybitRestClient(...)'
             rest_client_count = len(re.findall(r'rest_client\s*=\s*BybitRestClient\s*\(', content))
-            print(f"\n✓ Количество создания rest_client: {rest_client_count}")
+            print(f"\n✓ Количество создания rest_client (паттерн 'rest_client = BybitRestClient(...)'): {rest_client_count}")
             
             if rest_client_count == 1:
                 print("✓ ОТЛИЧНО: rest_client создаётся один раз (оптимизация)")
+            elif rest_client_count == 0:
+                print("⚠ Предупреждение: паттерн создания rest_client не найден (возможно изменился)")
             else:
-                print(f"⚠ Предупреждение: rest_client создаётся {rest_client_count} раз(а)")
+                print(f"⚠ Предупреждение: найдено {rest_client_count} создания(й) rest_client")
             
             print("\n" + "="*70)
             print("РЕЗУЛЬТАТ: ✓ ТЕСТ ПРОЙДЕН")

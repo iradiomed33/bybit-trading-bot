@@ -21,17 +21,17 @@ self.order_manager = OrderManager(rest_client, self.db)
 
 ### Правильный порядок (после исправления):
 
-1. ✓ **Database** (строка 124)
-2. ✓ **MarketDataClient** (строка 126)
-3. ✓ **AccountClient** (строка 128)
-4. ✓ **BybitRestClient** (строка 136) - создаётся **один раз** для всех компонентов
-5. ✓ **InstrumentsManager** (строка 142)
-6. ✓ **PositionStateManager** (строка 158)
-7. ✓✓✓ **OrderManager** (строка 170) - теперь создаётся **ПЕРЕД** sl_tp_manager
-8. ✓ **PositionManager** (строка 172)
-9. ✓✓✓ **StopLossTakeProfitManager** (строка 206) - теперь может безопасно использовать `self.order_manager`
-10. ✓ **KillSwitchManager** (строка 218)
-11. ✓ **PositionSignalHandler** (строка 256)
+1. ✓ **Database** - создаётся в начале инициализации
+2. ✓ **MarketDataClient** - создаётся после Database
+3. ✓ **AccountClient** - создаётся после MarketDataClient
+4. ✓ **BybitRestClient** - создаётся **один раз** для всех компонентов (в live режиме)
+5. ✓ **InstrumentsManager** - использует BybitRestClient
+6. ✓ **PositionStateManager** - использует AccountClient
+7. ✓✓✓ **OrderManager** - теперь создаётся **ПЕРЕД** sl_tp_manager, использует BybitRestClient
+8. ✓ **PositionManager** - использует OrderManager
+9. ✓✓✓ **StopLossTakeProfitManager** - теперь может безопасно использовать `self.order_manager`
+10. ✓ **KillSwitchManager** - использует BybitRestClient
+11. ✓ **PositionSignalHandler** - не зависит от других менеджеров
 
 ### Дополнительные улучшения:
 
