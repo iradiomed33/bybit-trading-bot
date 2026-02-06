@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-02-06T20:10:08.086076",
+  "summary": {
+    "total": 6,
+    "passed": 6,
+    "critical_failures": []
+  },
+  "tests": [
+    {
+      "test_id": "SMK-01",
+      "name": "Startup и конфиг",
+      "passed": true,
+      "details": "Конфиг загружен, основные параметры доступны",
+      "timestamp": "2026-02-06T20:09:59.463468",
+      "is_critical": true
+    },
+    {
+      "test_id": "SMK-02",
+      "name": "Market data OHLCV",
+      "passed": true,
+      "details": "Загружено 50 свечей, последняя свежая (10.0 мин назад)",
+      "timestamp": "2026-02-06T20:10:01.187084",
+      "is_critical": true
+    },
+    {
+      "test_id": "SMK-03",
+      "name": "FeaturePipeline indicators",
+      "passed": true,
+      "details": "Pipeline.process() работает, 100 строк, фичи созданы",
+      "timestamp": "2026-02-06T20:10:02.945561",
+      "is_critical": true
+    },
+    {
+      "test_id": "SMK-04",
+      "name": "Paper mode trades",
+      "passed": true,
+      "details": "Paper режим инициализирован, бот готов к симуляции сделок",
+      "timestamp": "2026-02-06T20:10:05.396779",
+      "is_critical": true
+    },
+    {
+      "test_id": "SMK-05",
+      "name": "TESTNET приватный API",
+      "passed": true,
+      "details": "Приватный запрос работает (позиции доступны)",
+      "timestamp": "2026-02-06T20:10:06.845972",
+      "is_critical": true
+    },
+    {
+      "test_id": "SMK-06",
+      "name": "Kill switch механизм",
+      "passed": true,
+      "details": "Kill switch работает (механизм готов)",
+      "timestamp": "2026-02-06T20:10:08.080156",
+      "is_critical": true
+    }
+  ]
+}

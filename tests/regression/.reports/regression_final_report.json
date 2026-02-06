@@ -1,0 +1,31 @@
+{
+  "timestamp": "2026-02-06T20:10:11.615224",
+  "duration_seconds": 14.164863,
+  "workspace": "C:\\bybit-trading-bot",
+  "results": {
+    "smoke": {
+      "status": "PASS",
+      "time_seconds": 11.012325763702393,
+      "count": 6
+    },
+    "unit": {
+      "status": "FAIL",
+      "time_seconds": 1.1765153408050537,
+      "error": "============================= test session starts =============================\nplatform win32 -- Python 3.13.7, pytest-8.0.0, pluggy-1.6.0 -- C:\\bybit-trading-bot\\venv\\Scripts\\python.exe\ncachedir: .pytest_cache\nrootdir: C:\\bybit-trading-bot\nconfigfile: pytest.ini\nplugins: anyio-3.7.1, cov-4.1.0\ncollecting ... collected 0 items\n\n============================ no tests ran in 0.04s ============================\n"
+    },
+    "integration": {
+      "status": "FAIL",
+      "time_seconds": 1.0685093402862549,
+      "error": "============================= test session starts =============================\nplatform win32 -- Python 3.13.7, pytest-8.0.0, pluggy-1.6.0 -- C:\\bybit-trading-bot\\venv\\Scripts\\python.exe\ncachedir: .pytest_cache\nrootdir: C:\\bybit-trading-bot\nconfigfile: pytest.ini\nplugins: anyio-3.7.1, cov-4.1.0\ncollecting ... collected 0 items\n\n============================ no tests ran in 0.05s ============================\n"
+    },
+    "testnet": {
+      "status": "PARTIAL",
+      "time_seconds": 0.8909456729888916
+    }
+  },
+  "critical_failures": [
+    "UNIT",
+    "INTEGRATION"
+  ],
+  "gate": false
+}
