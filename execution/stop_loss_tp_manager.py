@@ -432,11 +432,12 @@ class StopLossTakeProfitManager:
 
             )
 
-            if sl_result.get("retCode") != 0:
+            # sl_result теперь OrderResult, проверяем success вместо retCode
+            if not sl_result.success:
 
                 logger.warning(
 
-                    f"Failed to place SL order for {position_id}: {sl_result.get('retMsg')}"
+                    f"Failed to place SL order for {position_id}: {sl_result.error}"
 
                 )
 
@@ -444,7 +445,7 @@ class StopLossTakeProfitManager:
 
             else:
 
-                sl_order_id = sl_result.get("result", {}).get("orderId")
+                sl_order_id = sl_result.order_id
 
                 levels.sl_order_id = sl_order_id
 
@@ -474,11 +475,12 @@ class StopLossTakeProfitManager:
 
             )
 
-            if tp_result.get("retCode") != 0:
+            # tp_result теперь OrderResult, проверяем success вместо retCode
+            if not tp_result.success:
 
                 logger.warning(
 
-                    f"Failed to place TP order for {position_id}: {tp_result.get('retMsg')}"
+                    f"Failed to place TP order for {position_id}: {tp_result.error}"
 
                 )
 
@@ -486,7 +488,7 @@ class StopLossTakeProfitManager:
 
             else:
 
-                tp_order_id = tp_result.get("result", {}).get("orderId")
+                tp_order_id = tp_result.order_id
 
                 levels.tp_order_id = tp_order_id
 

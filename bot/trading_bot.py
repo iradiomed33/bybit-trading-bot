@@ -1662,9 +1662,10 @@ class TradingBot:
 
                 )
 
-                if order_result.get("retCode") == 0:
+                # order_result теперь OrderResult, проверяем success вместо retCode
+                if order_result.success:
 
-                    order_id = order_result.get("result", {}).get("orderId")
+                    order_id = order_result.order_id
 
                     logger.info(f"[LIVE] Order placed: {order_id}")
 
@@ -1820,7 +1821,7 @@ class TradingBot:
 
                 else:
 
-                    logger.error(f"Failed to place order: {order_result}")
+                    logger.error(f"Failed to place order: {order_result.error}")
 
             except Exception as e:
 
