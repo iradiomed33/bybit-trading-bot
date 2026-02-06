@@ -127,13 +127,17 @@ class TradingBot:
 
         self.account_client = AccountClient(testnet=testnet)
 
-        # Инициализируем менеджер инструментов для нормализации ордеров
+        # Для live режима создаём REST клиент один раз и используем для всех компонентов
 
         if mode == "live":
 
             from exchange.base_client import BybitRestClient
 
             rest_client = BybitRestClient(testnet=testnet)
+
+        # Инициализируем менеджер инструментов для нормализации ордеров
+
+        if mode == "live":
 
             self.instruments_manager = InstrumentsManager(rest_client, category="linear")
 
@@ -159,7 +163,23 @@ class TradingBot:
 
             self.position_state_manager = None
 
-        # Инициализируем менеджер SL/TP с привязкой к ATR
+        # ВАЖНО: Сначала создаём OrderManager и PositionManager (до SL/TP manager)
+
+        if mode == "live":
+
+            self.order_manager = OrderManager(rest_client, self.db)
+
+            self.position_manager = PositionManager(self.order_manager)
+
+            logger.info("Order manager and position manager initialized")
+
+        else:
+
+            self.order_manager = None
+
+            self.position_manager = None
+
+        # Инициализируем менеджер SL/TP с привязкой к ATR (требует order_manager)
 
         if mode == "live":
 
@@ -190,6 +210,18 @@ class TradingBot:
         else:
 
             self.sl_tp_manager = None
+
+        # Kill Switch Manager (для аварийного закрытия)
+
+        if mode == "live":
+
+            self.kill_switch_manager = KillSwitchManager(rest_client)
+
+            logger.info("Kill switch manager initialized for emergency shutdown")
+
+        else:
+
+            self.kill_switch_manager = None
 
         # Инициализируем обработчик сигналов для позиций (flip/add/ignore)
 
@@ -295,41 +327,11 @@ class TradingBot:
 
             self.advanced_risk_limits = None
 
-        # Kill Switch Manager (для аварийного закрытия)
+        # Paper mode execution components
 
-        if mode == "live":
-
-            from exchange.base_client import BybitRestClient
-
-            rest_client = BybitRestClient(testnet=testnet)
-
-            self.kill_switch_manager = KillSwitchManager(rest_client)
-
-            logger.info("Kill switch manager initialized for emergency shutdown")
-
-        else:
-
-            self.kill_switch_manager = None
-
-        # Execution
-
-        if mode == "live":
-
-            from exchange.base_client import BybitRestClient
-
-            rest_client = BybitRestClient(testnet=testnet)
-
-            self.order_manager = OrderManager(rest_client, self.db)
-
-            self.position_manager = PositionManager(self.order_manager)
-
-        else:
+        if mode == "paper":
 
             # Paper mode: используем симуляцию (E1)
-
-            self.order_manager = None
-
-            self.position_manager = None
 
             # Инициализируем PaperTradingSimulator
 
