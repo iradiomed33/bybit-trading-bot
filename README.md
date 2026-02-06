@@ -16,7 +16,41 @@ python cli.py paper
 
 # 4. Или запуск live (ОСТОРОЖНО! Реальные деньги)
 python cli.py live
+
+# 5. Валидировать стратегию перед live
+python -m examples.validate_sample_strategy
 ```
+
+## 🎓 EPIC V: Validation — Stop Trusting By Eye
+
+**VAL-001 | Unified Validation Pipeline** ✅ Production Ready
+
+Ensures identical logic across backtest/forward/live trading:
+
+```python
+from execution.backtest_runner import BacktestRunner
+
+runner = BacktestRunner()
+report = runner.run_unified_validation(
+    df=data,
+    strategy_func=my_strategy,
+    strategy_name="MyStrategy",
+)
+
+print(f"Train PF: {report.train_metrics.profit_factor:.2f}")
+print(f"Test PF:  {report.test_metrics.profit_factor:.2f}")
+print(f"Valid:    {report.is_valid}")
+```
+
+**Features**:
+- ✅ Canonical pipeline (same code for backtest/forward/live)
+- ✅ 27 comprehensive metrics (PF, DD, expectancy, exposure)
+- ✅ Transparent fee reporting (commission + slippage)
+- ✅ Out-of-sample validation (train/test split, no leakage)
+- ✅ Degradation detection (overfitting warning)
+- ✅ 19 unit tests, 434 total tests passing
+
+**Documentation**: [docs/VAL-001-Unified-Validation.md](docs/VAL-001-Unified-Validation.md)
 
 ## 🔧 Управление конфигурацией
 
@@ -39,7 +73,7 @@ python cli.py config validate
 **Полная документация**: [CONFIG_GUIDE.md](CONFIG_GUIDE.md)
 
 ## 🎯 Режимы работы
-- **backtest** - Исторический прогон на исторических данных
+- **backtest** - Исторический прогон на исторических данных (с VAL-001 validation)
 - **paper** - Симуляция торговли без реальных денег
 - **live** - Реальная торговля (используй TESTNET первым!)
 
