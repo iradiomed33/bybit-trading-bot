@@ -396,3 +396,122 @@ class OrderManager:
             logger.error(f"Cancel all exception: {e}", exc_info=True)
 
             return OrderResult.error_result(str(e))
+
+    def set_trading_stop(
+        self,
+        category: str,
+        symbol: str,
+        position_idx: int = 0,
+        stop_loss: Optional[str] = None,
+        take_profit: Optional[str] = None,
+        sl_trigger_by: str = "LastPrice",
+        tp_trigger_by: str = "LastPrice",
+        tpsl_mode: str = "Full",
+        sl_size: Optional[str] = None,
+        tp_size: Optional[str] = None,
+    ) -> OrderResult:
+        """
+        Установить Stop Loss и Take Profit на позицию через Trading Stop API.
+
+        Args:
+            category: Категория (linear, inverse, spot)
+            symbol: Символ
+            position_idx: 0 для one-way mode, 1 для Buy в hedge mode, 2 для Sell
+            stop_loss: Цена Stop Loss
+            take_profit: Цена Take Profit
+            sl_trigger_by: Триггер для SL ("LastPrice", "IndexPrice", "MarkPrice")
+            tp_trigger_by: Триггер для TP ("LastPrice", "IndexPrice", "MarkPrice")
+            tpsl_mode: "Full" (вся позиция) или "Partial" (частичная)
+            sl_size: Размер для SL (если tpsl_mode="Partial")
+            tp_size: Размер для TP (если tpsl_mode="Partial")
+
+        Returns:
+            OrderResult с информацией о результате
+
+        Docs: https://bybit-exchange.github.io/docs/v5/position/trading-stop
+        """
+        params = {
+            "category": category,
+            "symbol": symbol,
+            "positionIdx": position_idx,
+        }
+
+        if stop_loss:
+            params["stopLoss"] = stop_loss
+            params["slTriggerBy"] = sl_trigger_by
+            if sl_size and tpsl_mode == "Partial":
+                params["slSize"] = sl_size
+
+        if take_profit:
+            params["takeProfit"] = take_profit
+            params["tpTriggerBy"] = tp_trigger_by
+            if tp_size and tpsl_mode == "Partial":
+                params["tpSize"] = tp_size
+
+        if tpsl_mode:
+            params["tpslMode"] = tpsl_mode
+
+        logger.info(f"Setting trading stop for {symbol}: SL={stop_loss}, TP={take_profit}")
+
+        try:
+            response = self.client.post("/v5/position/trading-stop", params=params)
+
+            # Используем OrderResult.from_api_response для парсинга ответа
+            result = OrderResult.from_api_response(response)
+
+            if result.success:
+                logger.info(f"✓ Trading stop set for {symbol}")
+                return result
+            else:
+                logger.error(f"Failed to set trading stop: {result.error}")
+                return result
+
+        except Exception as e:
+            logger.error(f"Trading stop exception: {e}", exc_info=True)
+            return OrderResult.error_result(str(e))
+
+    def cancel_trading_stop(
+        self,
+        category: str,
+        symbol: str,
+        position_idx: int = 0,
+    ) -> OrderResult:
+        """
+        Отменить Stop Loss и Take Profit на позиции.
+
+        Это делается путем установки пустых значений через set_trading_stop.
+
+        Args:
+            category: Категория (linear, inverse, spot)
+            symbol: Символ
+            position_idx: 0 для one-way mode, 1 для Buy в hedge mode, 2 для Sell
+
+        Returns:
+            OrderResult с информацией о результате
+        """
+        params = {
+            "category": category,
+            "symbol": symbol,
+            "positionIdx": position_idx,
+            "stopLoss": "0",  # Установка 0 отменяет SL
+            "takeProfit": "0",  # Установка 0 отменяет TP
+        }
+
+        logger.info(f"Cancelling trading stop for {symbol}")
+
+        try:
+            response = self.client.post("/v5/position/trading-stop", params=params)
+
+            # Используем OrderResult.from_api_response для парсинга ответа
+            result = OrderResult.from_api_response(response)
+
+            if result.success:
+                logger.info(f"✓ Trading stop cancelled for {symbol}")
+                return result
+            else:
+                logger.error(f"Failed to cancel trading stop: {result.error}")
+                return result
+
+        except Exception as e:
+            logger.error(f"Cancel trading stop exception: {e}", exc_info=True)
+            return OrderResult.error_result(str(e))
