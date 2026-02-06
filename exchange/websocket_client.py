@@ -36,7 +36,12 @@ class BybitWebSocketClient:
 
     """
 
-    def __init__(self, ws_url: str, on_message: Callable[[Dict[Any, Any]], None]):
+    def __init__(
+        self, 
+        ws_url: str, 
+        on_message: Callable[[Dict[Any, Any]], None],
+        on_reconnect: Optional[Callable[[], None]] = None,
+    ):
         """
 
         Args:
@@ -45,11 +50,15 @@ class BybitWebSocketClient:
 
             on_message: Callback функция для обработки сообщений
 
+            on_reconnect: Callback функция при переподключении (для re-auth)
+
         """
 
         self.ws_url = ws_url
 
         self.on_message_callback = on_message
+
+        self.on_reconnect_callback = on_reconnect
 
         self.ws: Optional[websocket.WebSocketApp] = None
 
@@ -77,6 +86,13 @@ class BybitWebSocketClient:
         self.reconnect_count = 0
 
         self.last_ping_time = time.time()
+
+        # Вызываем callback при переподключении (для re-auth)
+        if self.on_reconnect_callback:
+            try:
+                self.on_reconnect_callback()
+            except Exception as e:
+                logger.error(f"Error in on_reconnect callback: {e}", exc_info=True)
 
     def _on_message(self, ws, message):
         """Callback при получении сообщения"""

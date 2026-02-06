@@ -11,8 +11,12 @@ Private WebSocket для Bybit V5: ордера и позиции.
 
 - Position stream: https://bybit-exchange.github.io/docs/v5/ws/private/position
 
+- Execution stream: https://bybit-exchange.github.io/docs/v5/ws/private/execution
+
 """
 
+
+import json
 
 import time
 
@@ -20,7 +24,7 @@ import hmac
 
 import hashlib
 
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, List, Optional
 
 from exchange.websocket_client import BybitWebSocketClient
 
@@ -50,6 +54,8 @@ class PrivateWebSocket:
 
         on_position: Callable[[Dict[Any, Any]], None],
 
+        on_execution: Optional[Callable[[Dict[Any, Any]], None]] = None,
+
         testnet: bool = True,
 
     ):
@@ -65,6 +71,8 @@ class PrivateWebSocket:
 
             on_position: Callback для обновлений позиций
 
+            on_execution: Callback для исполнений (fills)
+
             testnet: Использовать testnet
 
         """
@@ -76,6 +84,13 @@ class PrivateWebSocket:
         self.on_order = on_order
 
         self.on_position = on_position
+
+        self.on_execution = on_execution
+
+        # Локальное состояние
+        self.orders_state: Dict[str, Dict] = {}  # order_id -> order data
+        self.positions_state: Dict[str, Dict] = {}  # symbol -> position data
+        self.executions_history: List[Dict] = []  # История fills
 
         # Private WS URL
 
@@ -89,7 +104,11 @@ class PrivateWebSocket:
 
         )
 
-        self.client = BybitWebSocketClient(ws_url, self._handle_message)
+        self.client = BybitWebSocketClient(
+            ws_url, 
+            self._handle_message,
+            on_reconnect=self._on_reconnect,
+        )
 
         self.authenticated = False
 
@@ -144,13 +163,21 @@ class PrivateWebSocket:
 
         try:
 
-            self.client.ws.send(self.client.ws._app.send(auth_msg))
+            # ИСПРАВЛЕНО: правильная отправка через json.dumps
+            self.client.ws.send(json.dumps(auth_msg))
 
             logger.info("Authentication request sent")
 
         except Exception as e:
 
             logger.error(f"Failed to send auth request: {e}")
+
+    def _on_reconnect(self):
+        """Callback при переподключении - повторная аутентификация"""
+        logger.info("Reconnected, re-authenticating...")
+        self.authenticated = False
+        time.sleep(1)  # Даём время на стабилизацию соединения
+        self._authenticate()
 
     def _handle_message(self, data: Dict[Any, Any]):
         """Обработка входящих сообщений"""
@@ -181,7 +208,7 @@ class PrivateWebSocket:
 
             if data.get("success"):
 
-                logger.info(f"Successfully subscribed to {data.get('topic', 'unknown')}")
+                logger.info(f"Successfully subscribed to {data.get('args', 'unknown')}")
 
             else:
 
@@ -196,7 +223,13 @@ class PrivateWebSocket:
         if topic == "order":
 
             for order_data in data.get("data", []):
-
+                # Обновляем локальное состояние
+                order_id = order_data.get("orderId")
+                if order_id:
+                    self.orders_state[order_id] = order_data
+                    logger.debug(f"Order update: {order_id} - {order_data.get('orderStatus')}")
+                
+                # Вызываем callback
                 self.on_order(order_data)
 
         # Данные позиций
@@ -204,15 +237,84 @@ class PrivateWebSocket:
         if topic == "position":
 
             for position_data in data.get("data", []):
-
+                # Обновляем локальное состояние
+                symbol = position_data.get("symbol")
+                if symbol:
+                    self.positions_state[symbol] = position_data
+                    logger.debug(f"Position update: {symbol} - size={position_data.get('size')}")
+                
+                # Вызываем callback
                 self.on_position(position_data)
+
+        # Данные исполнений (fills)
+        if topic == "execution":
+            for execution_data in data.get("data", []):
+                # Сохраняем в историю
+                self.executions_history.append(execution_data)
+                
+                # Ограничиваем размер истории (последние 1000)
+                if len(self.executions_history) > 1000:
+                    self.executions_history = self.executions_history[-1000:]
+                
+                logger.info(
+                    f"Execution: {execution_data.get('symbol')} "
+                    f"{execution_data.get('side')} {execution_data.get('execQty')} @ {execution_data.get('execPrice')}"
+                )
+                
+                # Вызываем callback если есть
+                if self.on_execution:
+                    self.on_execution(execution_data)
 
     def _subscribe_to_topics(self):
         """Подписка на приватные топики после аутентификации"""
 
-        topics = ["order", "position"]
+        topics = ["order", "position", "execution"]
 
         self.client.subscribe(topics)
+
+    def get_order_status(self, order_id: str) -> Optional[Dict]:
+        """
+        Получить статус ордера из локального состояния.
+        
+        Args:
+            order_id: ID ордера
+            
+        Returns:
+            Данные ордера или None если не найден
+        """
+        return self.orders_state.get(order_id)
+
+    def get_position(self, symbol: str) -> Optional[Dict]:
+        """
+        Получить позицию по символу из локального состояния.
+        
+        Args:
+            symbol: Символ (например "BTCUSDT")
+            
+        Returns:
+            Данные позиции или None если нет позиции
+        """
+        return self.positions_state.get(symbol)
+
+    def get_executions(self, limit: int = 100) -> List[Dict]:
+        """
+        Получить историю исполнений (fills).
+        
+        Args:
+            limit: Максимальное количество записей
+            
+        Returns:
+            Список последних исполнений
+        """
+        return self.executions_history[-limit:]
+
+    def get_all_orders(self) -> Dict[str, Dict]:
+        """Получить все ордера из локального состояния"""
+        return self.orders_state.copy()
+
+    def get_all_positions(self) -> Dict[str, Dict]:
+        """Получить все позиции из локального состояния"""
+        return self.positions_state.copy()
 
     def start(self):
         """Запуск private WS"""
