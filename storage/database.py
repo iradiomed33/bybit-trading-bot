@@ -472,6 +472,47 @@ class Database:
 
         return order_id
 
+    def get_order_by_link_id(self, order_link_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Получить ордер по orderLinkId.
+
+        Args:
+            order_link_id: Клиентский ID ордера
+
+        Returns:
+            Dict с данными ордера или None если не найден
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT order_id, order_link_id, symbol, side, order_type, price, qty,
+                   filled_qty, status, time_in_force, created_time, updated_time, metadata
+            FROM orders
+            WHERE order_link_id = ?
+            """,
+            (order_link_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                "order_id": row[0],
+                "order_link_id": row[1],
+                "symbol": row[2],
+                "side": row[3],
+                "order_type": row[4],
+                "price": row[5],
+                "qty": row[6],
+                "filled_qty": row[7],
+                "status": row[8],
+                "time_in_force": row[9],
+                "created_time": row[10],
+                "updated_time": row[11],
+                "metadata": json.loads(row[12]) if row[12] else {},
+            }
+        
+        return None
+
     def save_execution(self, exec_data: Dict[str, Any]) -> int:
         """Сохранить исполнение (trade)"""
 

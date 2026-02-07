@@ -121,6 +121,15 @@ class OrderManager:
 
             order_link_id = f"order_{uuid.uuid4().hex[:16]}"
 
+        # ИДЕМПОТЕНТНОСТЬ: Проверяем, не существует ли уже ордер с таким orderLinkId
+        existing_order = self.check_order_exists(order_link_id)
+        if existing_order:
+            logger.warning(
+                f"⚠ Order with orderLinkId={order_link_id} already exists! "
+                f"Returning existing order to prevent duplicate."
+            )
+            return existing_order
+
         params = {
 
             "category": category,
@@ -232,6 +241,66 @@ class OrderManager:
             self.db.save_error("order_creation", str(e), metadata={"params": params})
 
             return OrderResult.error_result(str(e))
+
+    def check_order_exists(self, order_link_id: str) -> Optional[OrderResult]:
+        """
+        Проверяет, существует ли уже ордер с данным orderLinkId.
+
+        Проверка происходит в два этапа:
+        1. Проверка в локальной БД
+        2. Проверка через API (если в БД не найден)
+
+        Args:
+            order_link_id: Клиентский ID ордера для проверки
+
+        Returns:
+            OrderResult существующего ордера или None если ордер не найден
+        """
+        # 1. Проверяем в БД
+        db_order = self.db.get_order_by_link_id(order_link_id)
+        if db_order:
+            logger.debug(f"Order found in DB: {order_link_id}")
+            # Формируем OrderResult из данных БД
+            return OrderResult(
+                success=True,
+                order_id=db_order.get("order_id"),
+                error=None,
+                raw={"source": "database", "order": db_order}
+            )
+
+        # 2. Проверяем через API (на случай если БД не синхронизирована)
+        try:
+            # Используем get_orders для поиска по orderLinkId
+            # Примечание: Bybit API не позволяет прямой поиск по orderLinkId,
+            # но мы можем получить список активных ордеров
+            response = self.client.post(
+                "/v5/order/realtime",
+                params={
+                    "category": "linear",  # TODO: передавать category
+                    "orderLinkId": order_link_id,
+                }
+            )
+
+            result = OrderResult.from_api_response(response)
+            if result.success and result.raw.get("result", {}).get("list"):
+                orders = result.raw["result"]["list"]
+                if orders:
+                    logger.debug(f"Order found via API: {order_link_id}")
+                    # Возвращаем первый найденный ордер
+                    order = orders[0]
+                    return OrderResult(
+                        success=True,
+                        order_id=order.get("orderId"),
+                        error=None,
+                        raw={"source": "api", "order": order}
+                    )
+
+        except Exception as e:
+            logger.warning(f"Error checking order via API: {e}")
+            # Не критично, продолжаем
+
+        # Ордер не найден
+        return None
 
     def cancel_order(
 

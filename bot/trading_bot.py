@@ -1654,6 +1654,19 @@ class TradingBot:
 
                 side = "Buy" if signal["signal"] == "long" else "Sell"
 
+                # Генерируем стабильный orderLinkId для идемпотентности
+                from execution.order_idempotency import generate_order_link_id
+                
+                order_link_id = generate_order_link_id(
+                    strategy=signal.get("strategy", "default"),
+                    symbol=self.symbol,
+                    timestamp=int(time.time()),
+                    side=signal["signal"],  # "long" или "short"
+                    bucket_seconds=60,  # 1 минута - повторы в этом окне используют тот же ID
+                )
+                
+                logger.info(f"Generated orderLinkId: {order_link_id}")
+
                 order_result = self.order_manager.create_order(
 
                     category="linear",
@@ -1666,7 +1679,7 @@ class TradingBot:
 
                     qty=float(normalized_qty),  # Используем нормализованное количество
 
-                    order_link_id=f"bot_{int(time.time() * 1000)}",
+                    order_link_id=order_link_id,
 
                 )
 
