@@ -138,6 +138,18 @@ class KillSwitch:
 
         self.is_activated = False
 
+        # Удаляем записи активации из БД
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM errors
+            WHERE error_type = 'kill_switch_activated'
+            """
+        )
+        self.db.conn.commit()
+        deleted_count = cursor.rowcount
+        logger.info(f"Deleted {deleted_count} kill switch activation records from database")
+
         # Логируем сброс
 
         self.db.save_error(
