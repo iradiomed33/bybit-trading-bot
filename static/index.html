@@ -74,7 +74,7 @@
                     <!-- Кнопки управления ботом -->
                     <div class="row mb-4">
                         <div class="col-md-12">
-                            <div class="btn-group" role="group">
+                            <div class="btn-group mb-2" role="group">
                                 <button type="button" class="btn btn-success btn-lg" id="startBotBtn" onclick="startBot()">
                                     <i class="bi bi-play-fill"></i> Запустить бота
                                 </button>
@@ -82,6 +82,9 @@
                                     <i class="bi bi-stop-fill"></i> Остановить бота
                                 </button>
                             </div>
+                            <button type="button" class="btn btn-warning btn-lg ms-2 mb-2" id="resetKillswitchBtn" onclick="resetKillswitch()">
+                                <i class="bi bi-arrow-counterclockwise"></i> Сбросить Kill Switch
+                            </button>
                             <div id="botStatusMessage" class="mt-2"></div>
                         </div>
                     </div>

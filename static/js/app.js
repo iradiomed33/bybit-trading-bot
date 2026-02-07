@@ -180,6 +180,35 @@ async function stopBot() {
     }
 }
 
+async function resetKillswitch() {
+    // Подтверждение от пользователя
+    const confirmation = confirm(
+        '⚠️ Вы уверены, что хотите сбросить Kill Switch?\n\n' +
+        'Kill Switch был активирован для защиты от критических ошибок или превышения лимитов риска.\n\n' +
+        'Перед сбросом убедитесь, что проблема устранена!\n\n' +
+        'Продолжить?'
+    );
+    
+    if (!confirmation) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/bot/reset_killswitch`, { method: 'POST' });
+        const data = await response.json();
+        
+        if (response.ok) {
+            showBotStatusMessage('✅ Kill Switch успешно сброшен! Теперь можно запустить бота.', 'success');
+            console.log('Kill switch reset successfully');
+        } else {
+            showBotStatusMessage(`❌ Ошибка: ${data.message}`, 'danger');
+        }
+    } catch (error) {
+        console.error('Error resetting kill switch:', error);
+        showBotStatusMessage('❌ Не удалось сбросить Kill Switch', 'danger');
+    }
+}
+
 function updateBotControlButtons() {
     const startBtn = document.getElementById('startBotBtn');
     const stopBtn = document.getElementById('stopBotBtn');

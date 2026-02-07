@@ -1589,6 +1589,50 @@ async def stop_bot():
         return {"status": "error", "message": str(e)}, 500
 
 
+@app.post("/api/bot/reset_killswitch")
+async def reset_killswitch():
+    """Сбросить kill switch (аварийный стоп)"""
+    
+    try:
+        from risk.kill_switch import KillSwitch
+        
+        # Create database connection
+        db = Database()
+        
+        # Create KillSwitch instance
+        kill_switch = KillSwitch(db)
+        
+        # Reset with confirmation
+        success = kill_switch.reset("RESET")
+        
+        if success:
+            logger.info("Kill switch reset successfully via API")
+            
+            # Broadcast to WebSocket clients
+            await broadcast_to_clients(
+                {
+                    "type": "killswitch_reset",
+                    "message": "✅ Kill switch сброшен. Бот можно запустить.",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            
+            return {
+                "status": "success",
+                "message": "Kill switch успешно сброшен",
+                "timestamp": datetime.now().isoformat(),
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Не удалось сбросить kill switch",
+            }, 400
+    
+    except Exception as e:
+        logger.error(f"Failed to reset kill switch: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}, 500
+
+
 async def broadcast_to_clients(message: Dict[str, Any]):
     """Отправить сообщение всем WebSocket клиентам"""
 
