@@ -55,6 +55,8 @@ from logger import setup_logger
 
 from signal_logger import get_signal_logger
 
+import logging
+
 
 logger = setup_logger(__name__)
 
@@ -63,6 +65,27 @@ signal_logger = get_signal_logger()
 # Global bot instance
 bot_instance = None
 bot_thread = None
+
+
+# ============================================================================
+# WebSocket Log Handler
+# ============================================================================
+
+class WebSocketLogHandler(logging.Handler):
+    """Handler that broadcasts log records to WebSocket clients"""
+    
+    def emit(self, record):
+        try:
+            log_entry = self.format(record)
+            # Broadcast to all connected WebSocket clients
+            asyncio.create_task(broadcast_to_clients({
+                "type": "log",
+                "level": record.levelname,
+                "message": log_entry,
+                "timestamp": datetime.now().isoformat()
+            }))
+        except Exception:
+            self.handleError(record)
 
 
 # ============================================================================
@@ -1420,6 +1443,22 @@ async def start_bot():
         
         # Create bot instance
         bot_instance = TradingBot(mode=mode, strategies=strategies, testnet=testnet)
+        
+        # Add WebSocket handler to bot's logger
+        bot_logger = logging.getLogger("bot.trading_bot")
+        ws_handler = WebSocketLogHandler()
+        ws_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        ws_handler.setFormatter(formatter)
+        bot_logger.addHandler(ws_handler)
+        
+        # Add handler to other relevant loggers
+        for logger_name in ["execution", "strategy", "risk", "signals"]:
+            sub_logger = logging.getLogger(logger_name)
+            sub_logger.addHandler(ws_handler)
         
         # Run bot in separate thread
         def run_bot():

@@ -1,6 +1,6 @@
 // API Configuration
-const API_BASE = 'http://localhost:8000/api';
-const WS_URL = 'ws://localhost:8000/ws';
+const API_BASE = window.location.origin + '/api';
+const WS_URL = window.location.origin.replace('http', 'ws') + '/ws';
 const API_URL = window.location.origin;
 const TOKEN_KEY = 'auth_token';
 const USERNAME_KEY = 'auth_username';
