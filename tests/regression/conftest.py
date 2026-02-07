@@ -8,6 +8,15 @@ Shared fixtures для всех regression тестов.
 - Конфигурации
 """
 
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Загрузить .env файл для testnet тестов
+env_path = Path(__file__).parent.parent.parent / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
+
 import pytest
 import pandas as pd
 import numpy as np

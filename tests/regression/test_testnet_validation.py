@@ -10,6 +10,7 @@ TESTNET ТЕСТЫ: Валидация и сигналы (REG-VAL-001)
 import os
 import pytest
 from exchange.base_client import BybitRestClient
+from exchange.market_data import MarketDataClient
 from data.features import FeaturePipeline
 from strategy.meta_layer import RegimeSwitcher
 
@@ -23,22 +24,24 @@ class TestREGVAL001_RealDataValidation:
     )
     def test_fetch_real_market_data(self):
         """Загрузка реальных свечей с testnet должна работать"""
-        client = BybitRestClient(testnet=True)
+        client = MarketDataClient(testnet=True)
         
         try:
-            ohlcv = client.fetch_ohlcv(
+            # get_kline возвращает DataFrame
+            df = client.get_kline(
                 symbol='BTCUSDT',
-                timeframe='1h',
+                interval='60',  # 1 час
                 limit=100,
             )
             
             # Данные должны быть загружены
-            assert ohlcv is not None
-            assert len(ohlcv) > 0
+            assert df is not None
+            assert len(df) > 0
             
-            # Каждая свеча должна иметь o,h,l,c,v
-            if isinstance(ohlcv, list):
-                assert len(ohlcv[0]) >= 5
+            # DataFrame должен иметь OHLCV столбцы
+            required_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in required_cols:
+                assert col in df.columns
         except Exception as e:
             pytest.skip(f"Market data unavailable: {e}")
     
@@ -48,14 +51,14 @@ class TestREGVAL001_RealDataValidation:
     )
     def test_features_work_on_real_data(self):
         """Feature pipeline должен работать на реальных данных"""
-        client = BybitRestClient(testnet=True)
+        client = MarketDataClient(testnet=True)
         pipeline = FeaturePipeline()
         
         try:
             # Загрузить реальные данные
-            ohlcv = client.fetch_ohlcv(
+            df = client.get_kline(
                 symbol='BTCUSDT',
-                timeframe='1h',
+                interval='60',
                 limit=100,
             )
             

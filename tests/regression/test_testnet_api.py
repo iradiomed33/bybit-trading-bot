@@ -12,6 +12,8 @@ TESTNET ТЕСТЫ: API и аутентификация (REG-B1-02, REG-B2, REG-
 import os
 import pytest
 from exchange.base_client import BybitRestClient
+from exchange.account import AccountClient
+from exchange.market_data import MarketDataClient
 
 
 class TestREGB1_02_PrivateAPI:
@@ -23,15 +25,15 @@ class TestREGB1_02_PrivateAPI:
     )
     def test_get_account_balance(self):
         """Получение баланса аккаунта должно работать"""
-        client = BybitRestClient(testnet=True)
+        client = AccountClient(testnet=True)
         
         try:
-            balance = client.get_account_balance()
+            balance = client.get_wallet_balance(coin='USDT')
             
-            # Balance должен быть dict или иметь параметры
+            # Balance должен быть dict с результатами
             assert balance is not None
-            if isinstance(balance, dict):
-                assert 'balance' in balance or 'result' in balance
+            assert isinstance(balance, dict)
+            assert 'retCode' in balance
         except Exception as e:
             pytest.skip(f"API недоступен: {e}")
     
@@ -41,14 +43,15 @@ class TestREGB1_02_PrivateAPI:
     )
     def test_get_positions(self):
         """Получение позиций с testnet API должно работать"""
-        client = BybitRestClient(testnet=True)
+        client = AccountClient(testnet=True)
         
         try:
             positions = client.get_positions(symbol='BTCUSDT')
             
-            # Результат должен быть list или dict
+            # Результат должен быть dict с retCode
             assert positions is not None
-            assert isinstance(positions, (list, dict))
+            assert isinstance(positions, dict)
+            assert 'retCode' in positions
         except Exception as e:
             pytest.skip(f"API недоступен: {e}")
     
@@ -79,8 +82,14 @@ class TestREGB2_WebSocket:
         """WebSocket подключение должно устанавливаться"""
         try:
             from exchange.websocket_client import BybitWebSocketClient
+            from config import Config
             
-            ws = BybitWebSocketClient(testnet=True)
+            # WebSocket требует URL и callback
+            ws_url = Config.BYBIT_WS_PUBLIC_TESTNET
+            ws = BybitWebSocketClient(
+                ws_url=ws_url,
+                on_message=lambda msg: None,
+            )
             assert ws is not None
             
             # После создания клиент должен быть готов
@@ -99,8 +108,13 @@ class TestREGB2_WebSocket:
         """WebSocket должен отправлять обновления позиций"""
         try:
             from exchange.websocket_client import BybitWebSocketClient
+            from config import Config
             
-            ws = BybitWebSocketClient(testnet=True)
+            ws_url = Config.BYBIT_WS_PUBLIC_TESTNET
+            ws = BybitWebSocketClient(
+                ws_url=ws_url,
+                on_message=lambda msg: None,
+            )
             
             # Проверить что метод подписки существует
             assert callable(ws.subscribe)
@@ -119,15 +133,15 @@ class TestREGB3_03_OrderNormalization:
     )
     def test_instruments_loaded_from_api(self):
         """Инструменты должны загружаться с API"""
-        client = BybitRestClient(testnet=True)
+        client = MarketDataClient(testnet=True)
         
         try:
-            instruments = client.get_instruments(symbol='BTCUSDT')
+            instruments = client.get_instruments_info(symbol='BTCUSDT')
             
             # Инструменты должны быть загружены
             assert instruments is not None
-            if isinstance(instruments, dict):
-                assert 'symbol' in instruments or 'BTCUSDT' in str(instruments)
+            assert isinstance(instruments, dict)
+            assert 'retCode' in instruments
         except Exception as e:
             pytest.skip(f"Instruments API недоступен: {e}")
     
@@ -159,11 +173,17 @@ class TestREGB_Testnet_Integration:
     )
     def test_rest_and_websocket_work_together(self):
         """REST API и WebSocket должны работать без конфликтов"""
-        client = BybitRestClient(testnet=True)
+        client = AccountClient(testnet=True)
         
         try:
             from exchange.websocket_client import BybitWebSocketClient
-            ws = BybitWebSocketClient(testnet=True)
+            from config import Config
+            
+            ws_url = Config.BYBIT_WS_PUBLIC_TESTNET
+            ws = BybitWebSocketClient(
+                ws_url=ws_url,
+                on_message=lambda msg: None,
+            )
             
             # Оба компонента инициализированы
             assert client is not None
