@@ -297,7 +297,10 @@ class TradingBot:
 
             )
 
-            self.volatility_position_sizer = VolatilityPositionSizer(volatility_config)
+            self.volatility_position_sizer = VolatilityPositionSizer(
+                volatility_config,
+                instruments_manager=self.instruments_manager,
+            )
 
             logger.info("Volatility position sizer initialized (D3)")
 
@@ -1005,6 +1008,8 @@ class TradingBot:
                             atr=atr_decimal,
 
                             signal=signal.get("signal", "long"),
+                            
+                            symbol=self.symbol,
 
                         )
 
@@ -1449,6 +1454,8 @@ class TradingBot:
                                     atr=atr_decimal,
 
                                     signal=signal.get("signal", "long"),
+                                    
+                                    symbol=self.symbol,
 
                                 )
 
