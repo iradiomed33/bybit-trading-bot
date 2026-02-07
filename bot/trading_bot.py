@@ -231,6 +231,21 @@ class TradingBot:
 
             self.kill_switch_manager = None
 
+        # Reconciliation Service (для синхронизации состояния с биржей)
+        if mode == "live":
+            from execution.reconciliation import ReconciliationService
+            
+            self.reconciliation_service = ReconciliationService(
+                client=rest_client,
+                position_manager=self.position_manager,
+                db=self.db,
+                symbol=symbol,
+                reconcile_interval=60,  # Сверка каждые 60 секунд
+            )
+            logger.info("Reconciliation service initialized")
+        else:
+            self.reconciliation_service = None
+
         # Инициализируем обработчик сигналов для позиций (flip/add/ignore)
 
         if mode == "live":
@@ -388,6 +403,19 @@ class TradingBot:
             logger.error("Kill switch is active! Cannot start. Reset with confirmation first.")
 
             return
+
+        # Выполняем первоначальную сверку состояния с биржей (для live режима)
+        if self.mode == "live" and self.reconciliation_service:
+            logger.info("Running initial reconciliation with exchange...")
+            try:
+                self.reconciliation_service.run_reconciliation()
+                logger.info("Initial reconciliation complete")
+                
+                # Запускаем фоновый поток для периодической сверки
+                self.reconciliation_service.start_loop()
+            except Exception as e:
+                logger.error(f"Initial reconciliation failed: {e}", exc_info=True)
+                # Продолжаем работу даже если сверка не удалась
 
         self.is_running = True
 
@@ -2004,3 +2032,7 @@ class TradingBot:
         logger.info("Stopping bot...")
 
         self.is_running = False
+        
+        # Остановить reconciliation service если запущен
+        if self.mode == "live" and self.reconciliation_service:
+            self.reconciliation_service.stop_loop()

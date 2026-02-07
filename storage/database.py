@@ -838,6 +838,120 @@ class Database:
 
         return dict(row) if row else None
 
+    def get_active_orders(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Получить активные ордера для символа.
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            List of active orders
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM orders
+            WHERE symbol = ?
+            AND status IN ('New', 'PartiallyFilled')
+            ORDER BY created_time DESC
+            """,
+            (symbol,),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    
+    def update_order_status(self, order_id: str, status: str) -> None:
+        """
+        Обновить статус ордера.
+        
+        Args:
+            order_id: Order ID
+            status: New status
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            UPDATE orders
+            SET status = ?, updated_time = ?
+            WHERE order_id = ?
+            """,
+            (status, datetime.now().timestamp(), order_id),
+        )
+        self.conn.commit()
+        logger.debug(f"Order {order_id} status updated to {status}")
+    
+    def order_exists(self, order_id: str) -> bool:
+        """
+        Проверить существование ордера в БД.
+        
+        Args:
+            order_id: Order ID
+            
+        Returns:
+            True if exists
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id FROM orders WHERE order_id = ?",
+            (order_id,),
+        )
+        return cursor.fetchone() is not None
+    
+    def execution_exists(self, exec_id: str) -> bool:
+        """
+        Проверить существование исполнения в БД.
+        
+        Args:
+            exec_id: Execution ID
+            
+        Returns:
+            True if exists
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id FROM executions WHERE exec_id = ?",
+            (exec_id,),
+        )
+        return cursor.fetchone() is not None
+    
+    def save_execution(self, exec_data: Dict[str, Any]) -> int:
+        """
+        Сохранить исполнение (fill).
+        
+        Args:
+            exec_data: Execution data from exchange
+            
+        Returns:
+            Execution DB ID
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO executions
+            (exec_id, order_id, order_link_id, symbol, side, price, qty,
+             exec_fee, exec_time, is_maker, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                exec_data.get("execId"),
+                exec_data.get("orderId"),
+                exec_data.get("orderLinkId"),
+                exec_data.get("symbol"),
+                exec_data.get("side"),
+                float(exec_data.get("execPrice", 0)),
+                float(exec_data.get("execQty", 0)),
+                float(exec_data.get("execFee", 0)),
+                float(exec_data.get("execTime", 0)) / 1000,  # ms to seconds
+                1 if exec_data.get("isMaker") else 0,
+                json.dumps(exec_data.get("metadata", {})),
+            ),
+        )
+        self.conn.commit()
+        exec_id = cursor.lastrowid
+        logger.debug(f"Execution saved: {exec_data.get('execId')}")
+        return exec_id
+
     def close(self):
         """Закрыть соединение с БД"""
 
