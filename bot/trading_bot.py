@@ -64,6 +64,8 @@ from risk.advanced_risk_limits import AdvancedRiskLimits, RiskLimitsConfig, Risk
 
 from risk.volatility_position_sizer import VolatilityPositionSizer, VolatilityPositionSizerConfig
 
+from risk.risk_monitor import RiskMonitorService, RiskMonitorConfig
+
 from execution import OrderManager, PositionManager
 
 from utils import retry_api_call
@@ -127,13 +129,17 @@ class TradingBot:
 
         self.account_client = AccountClient(testnet=testnet)
 
-        # Инициализируем менеджер инструментов для нормализации ордеров
+        # Для live режима создаём REST клиент один раз и используем для всех компонентов
 
         if mode == "live":
 
             from exchange.base_client import BybitRestClient
 
             rest_client = BybitRestClient(testnet=testnet)
+
+        # Инициализируем менеджер инструментов для нормализации ордеров
+
+        if mode == "live":
 
             self.instruments_manager = InstrumentsManager(rest_client, category="linear")
 
@@ -159,7 +165,23 @@ class TradingBot:
 
             self.position_state_manager = None
 
-        # Инициализируем менеджер SL/TP с привязкой к ATR
+        # ВАЖНО: Сначала создаём OrderManager и PositionManager (до SL/TP manager)
+
+        if mode == "live":
+
+            self.order_manager = OrderManager(rest_client, self.db)
+
+            self.position_manager = PositionManager(self.order_manager)
+
+            logger.info("Order manager and position manager initialized")
+
+        else:
+
+            self.order_manager = None
+
+            self.position_manager = None
+
+        # Инициализируем менеджер SL/TP с привязкой к ATR (требует order_manager)
 
         if mode == "live":
 
@@ -190,6 +212,64 @@ class TradingBot:
         else:
 
             self.sl_tp_manager = None
+
+        # Kill Switch Manager (для аварийного закрытия)
+
+        if mode == "live":
+
+            # Получаем список разрешённых символов из конфигурации
+            allowed_symbols = [symbol] if symbol else []  # Используем текущий symbol из конфига
+
+            self.kill_switch_manager = KillSwitchManager(
+                client=rest_client,
+                order_manager=self.order_manager,
+                db=self.db,
+                allowed_symbols=allowed_symbols,
+            )
+
+            logger.info("Kill switch manager initialized for emergency shutdown")
+
+        else:
+
+            self.kill_switch_manager = None
+
+        # Reconciliation Service (для синхронизации состояния с биржей)
+        if mode == "live":
+            from execution.reconciliation import ReconciliationService
+            
+            self.reconciliation_service = ReconciliationService(
+                client=rest_client,
+                position_manager=self.position_manager,
+                db=self.db,
+                symbol=symbol,
+                reconcile_interval=60,  # Сверка каждые 60 секунд
+            )
+            logger.info("Reconciliation service initialized")
+        else:
+            self.reconciliation_service = None
+
+        # Risk Monitor Service (для реал-тайм мониторинга рисков по данным биржи)
+        if mode == "live":
+            risk_monitor_config = RiskMonitorConfig(
+                max_daily_loss_percent=5.0,  # 5% от equity
+                max_position_notional=50000.0,  # $50k max
+                max_leverage=10.0,  # 10x max
+                max_orders_per_symbol=10,  # 10 ордеров max
+                monitor_interval_seconds=30,  # Проверка каждые 30 секунд
+                enable_auto_kill_switch=True,  # Авто kill-switch при критических нарушениях
+            )
+            
+            self.risk_monitor = RiskMonitorService(
+                account_client=self.account_client,
+                kill_switch_manager=self.kill_switch_manager,
+                advanced_risk_limits=self.advanced_risk_limits,
+                db=self.db,
+                symbol=symbol,
+                config=risk_monitor_config,
+            )
+            logger.info("Risk monitor service initialized")
+        else:
+            self.risk_monitor = None
 
         # Инициализируем обработчик сигналов для позиций (flip/add/ignore)
 
@@ -257,7 +337,10 @@ class TradingBot:
 
             )
 
-            self.volatility_position_sizer = VolatilityPositionSizer(volatility_config)
+            self.volatility_position_sizer = VolatilityPositionSizer(
+                volatility_config,
+                instruments_manager=self.instruments_manager,
+            )
 
             logger.info("Volatility position sizer initialized (D3)")
 
@@ -295,41 +378,11 @@ class TradingBot:
 
             self.advanced_risk_limits = None
 
-        # Kill Switch Manager (для аварийного закрытия)
+        # Paper mode execution components
 
-        if mode == "live":
-
-            from exchange.base_client import BybitRestClient
-
-            rest_client = BybitRestClient(testnet=testnet)
-
-            self.kill_switch_manager = KillSwitchManager(rest_client)
-
-            logger.info("Kill switch manager initialized for emergency shutdown")
-
-        else:
-
-            self.kill_switch_manager = None
-
-        # Execution
-
-        if mode == "live":
-
-            from exchange.base_client import BybitRestClient
-
-            rest_client = BybitRestClient(testnet=testnet)
-
-            self.order_manager = OrderManager(rest_client, self.db)
-
-            self.position_manager = PositionManager(self.order_manager)
-
-        else:
+        if mode == "paper":
 
             # Paper mode: используем симуляцию (E1)
-
-            self.order_manager = None
-
-            self.position_manager = None
 
             # Инициализируем PaperTradingSimulator
 
@@ -375,6 +428,39 @@ class TradingBot:
             logger.error("Kill switch is active! Cannot start. Reset with confirmation first.")
 
             return
+
+        # Выполняем первоначальную сверку состояния с биржей (для live режима)
+        if self.mode == "live" and self.reconciliation_service:
+            logger.info("Running initial reconciliation with exchange...")
+            try:
+                self.reconciliation_service.run_reconciliation()
+                logger.info("Initial reconciliation complete")
+                
+                # Запускаем фоновый поток для периодической сверки
+                self.reconciliation_service.start_loop()
+            except Exception as e:
+                logger.error(f"Initial reconciliation failed: {e}", exc_info=True)
+                # Продолжаем работу даже если сверка не удалась
+
+        # Запускаем Risk Monitor для реал-тайм проверки лимитов (для live режима)
+        if self.mode == "live" and self.risk_monitor:
+            logger.info("Starting risk monitoring...")
+            try:
+                # Первоначальная проверка лимитов
+                initial_check = self.risk_monitor.run_monitoring_check()
+                logger.info(f"Initial risk check: decision={initial_check['decision'].value}")
+                
+                # Если уже критические нарушения - не запускаемся
+                if initial_check["decision"] == RiskDecision.STOP:
+                    logger.critical("CRITICAL risk violations detected! Cannot start trading.")
+                    return
+                
+                # Запускаем фоновый поток для периодического мониторинга
+                self.risk_monitor.start_monitoring()
+                logger.info("Risk monitoring started")
+            except Exception as e:
+                logger.error(f"Risk monitoring setup failed: {e}", exc_info=True)
+                # Продолжаем работу даже если мониторинг не удался
 
         self.is_running = True
 
@@ -995,6 +1081,8 @@ class TradingBot:
                             atr=atr_decimal,
 
                             signal=signal.get("signal", "long"),
+                            
+                            symbol=self.symbol,
 
                         )
 
@@ -1439,6 +1527,8 @@ class TradingBot:
                                     atr=atr_decimal,
 
                                     signal=signal.get("signal", "long"),
+                                    
+                                    symbol=self.symbol,
 
                                 )
 
@@ -1644,6 +1734,19 @@ class TradingBot:
 
                 side = "Buy" if signal["signal"] == "long" else "Sell"
 
+                # Генерируем стабильный orderLinkId для идемпотентности
+                from execution.order_idempotency import generate_order_link_id
+                
+                order_link_id = generate_order_link_id(
+                    strategy=signal.get("strategy", "default"),
+                    symbol=self.symbol,
+                    timestamp=int(time.time()),
+                    side=signal["signal"],  # "long" или "short"
+                    bucket_seconds=60,  # 1 минута - повторы в этом окне используют тот же ID
+                )
+                
+                logger.info(f"Generated orderLinkId: {order_link_id}")
+
                 order_result = self.order_manager.create_order(
 
                     category="linear",
@@ -1656,13 +1759,14 @@ class TradingBot:
 
                     qty=float(normalized_qty),  # Используем нормализованное количество
 
-                    order_link_id=f"bot_{int(time.time() * 1000)}",
+                    order_link_id=order_link_id,
 
                 )
 
-                if order_result.get("retCode") == 0:
+                # order_result теперь OrderResult, проверяем success вместо retCode
+                if order_result.success:
 
-                    order_id = order_result.get("result", {}).get("orderId")
+                    order_id = order_result.order_id
 
                     logger.info(f"[LIVE] Order placed: {order_id}")
 
@@ -1818,7 +1922,7 @@ class TradingBot:
 
                 else:
 
-                    logger.error(f"Failed to place order: {order_result}")
+                    logger.error(f"Failed to place order: {order_result.error}")
 
             except Exception as e:
 
@@ -1973,3 +2077,15 @@ class TradingBot:
         logger.info("Stopping bot...")
 
         self.is_running = False
+        
+        # Остановить reconciliation service если запущен
+        if self.mode == "live" and self.reconciliation_service:
+            self.reconciliation_service.stop_loop()
+            logger.info("Reconciliation service stopped")
+        
+        # Остановить risk monitor если запущен
+        if self.mode == "live" and self.risk_monitor:
+            self.risk_monitor.stop_monitoring()
+            logger.info("Risk monitor stopped")
+
+        logger.info("Bot stopped successfully")

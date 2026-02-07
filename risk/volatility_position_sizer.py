@@ -98,6 +98,8 @@ class VolatilityPositionSizer:
     """
 
     Position sizing engine that scales with volatility.
+    
+    Uses InstrumentsManager for correct qty rounding according to exchange rules.
 
 
     Maintains stable USD risk across different market conditions
@@ -106,7 +108,11 @@ class VolatilityPositionSizer:
 
     """
 
-    def __init__(self, config: Optional[VolatilityPositionSizerConfig] = None):
+    def __init__(
+        self, 
+        config: Optional[VolatilityPositionSizerConfig] = None,
+        instruments_manager=None,
+    ):
         """
 
         Initialize Volatility Position Sizer.
@@ -115,10 +121,12 @@ class VolatilityPositionSizer:
         Args:
 
             config: Configuration object (defaults to 1% risk per trade)
+            instruments_manager: InstrumentsManager for qty rounding (optional)
 
         """
 
         self.config = config or VolatilityPositionSizerConfig()
+        self.instruments_manager = instruments_manager
 
         # Tracking
 
@@ -147,6 +155,8 @@ class VolatilityPositionSizer:
         atr: Optional[Decimal] = None,
 
         signal: Optional[Dict] = None,
+        
+        symbol: Optional[str] = None,
 
     ) -> Tuple[Decimal, Dict]:
         """
@@ -163,6 +173,8 @@ class VolatilityPositionSizer:
             atr: Average True Range (if None, uses fallback)
 
             signal: Optional signal dict with additional context
+            
+            symbol: Trading symbol for instrument-specific rounding (optional)
 
 
         Returns:
@@ -315,27 +327,48 @@ class VolatilityPositionSizer:
 
             constraint_applied = True
 
-        # Round to reasonable precision (match min_position_size or smaller)
-
-        # For min_position_size=0.00001, use 0.00001 rounding
-
-        rounding_precision = self.config.min_position_size
-
-        if rounding_precision == Decimal("0.00001"):
-
-            position_qty_rounded = position_qty_constrained.quantize(
-
-                Decimal("0.00001"), rounding=ROUND_HALF_UP
-
-            )
-
+        # Округляем qty согласно правилам инструмента
+        
+        if self.instruments_manager and symbol:
+            # Используем реальный qtyStep из инструмента
+            from exchange.normalization import round_qty
+            try:
+                position_qty_rounded = round_qty(
+                    self.instruments_manager,
+                    symbol,
+                    position_qty_constrained
+                )
+                logger.debug(
+                    f"Rounded qty using instrument rules: "
+                    f"{position_qty_constrained} → {position_qty_rounded}"
+                )
+            except ValueError as e:
+                # Fallback на конфигурируемую точность если инструмент не найден
+                logger.warning(f"Failed to round using instrument rules: {e}, using fallback")
+                rounding_precision = self.config.min_position_size
+                position_qty_rounded = position_qty_constrained.quantize(
+                    rounding_precision, rounding=ROUND_HALF_UP
+                )
         else:
-
-            position_qty_rounded = position_qty_constrained.quantize(
-
-                Decimal("0.0001"), rounding=ROUND_HALF_UP
-
-            )
+            # Fallback на конфигурируемую точность
+            # DEPRECATED: следует всегда передавать instruments_manager и symbol
+            rounding_precision = self.config.min_position_size
+            
+            if rounding_precision == Decimal("0.00001"):
+            
+                position_qty_rounded = position_qty_constrained.quantize(
+            
+                    Decimal("0.00001"), rounding=ROUND_HALF_UP
+            
+                )
+            
+            else:
+            
+                position_qty_rounded = position_qty_constrained.quantize(
+            
+                    Decimal("0.0001"), rounding=ROUND_HALF_UP
+            
+                )
 
         details = {
 

@@ -14,6 +14,7 @@ import pytest
 from exchange.base_client import BybitRestClient
 from execution.order_manager import OrderManager
 from execution.kill_switch import KillSwitchManager
+from storage.database import Database
 
 
 class TestREGC1_02_PlaceOrder:
@@ -23,23 +24,24 @@ class TestREGC1_02_PlaceOrder:
         not os.getenv('BYBIT_API_KEY'),
         reason="BYBIT_API_KEY не установлен"
     )
-    def test_place_limit_order(self):
+    def test_place_limit_order(self, mock_database):
         """Размещение limit ордера на testnet должно работать"""
         client = BybitRestClient(testnet=True)
+        om = OrderManager(client=client, db=mock_database)
         
         try:
-            order = client.place_order(
+            order_result = om.create_order(
+                category='linear',
                 symbol='BTCUSDT',
                 side='Buy',
-                orderType='Limit',
+                order_type='Limit',
                 qty=0.001,
                 price=50000.0,
             )
             
             # Ордер должен быть размещен
-            assert order is not None
-            if isinstance(order, dict):
-                assert 'orderId' in order or 'order_id' in order or 'status' in order
+            assert order_result is not None
+            assert hasattr(order_result, 'success')
         except Exception as e:
             pytest.skip(f"Order API недоступен: {e}")
     
@@ -47,24 +49,24 @@ class TestREGC1_02_PlaceOrder:
         not os.getenv('BYBIT_API_KEY'),
         reason="BYBIT_API_KEY не установлен"
     )
-    def test_order_has_valid_id(self):
+    def test_order_has_valid_id(self, mock_database):
         """Размещенный ордер должен иметь валидный ID"""
         client = BybitRestClient(testnet=True)
+        om = OrderManager(client=client, db=mock_database)
         
         try:
-            order = client.place_order(
+            order_result = om.create_order(
+                category='linear',
                 symbol='BTCUSDT',
                 side='Buy',
-                orderType='Limit',
+                order_type='Limit',
                 qty=0.001,
-                price=49000.0,  # Ниже текущей цены
+                price=49000.0,
             )
             
             # Должен быть ID
-            if isinstance(order, dict):
-                order_id = order.get('orderId') or order.get('order_id')
-                if order_id:
-                    assert len(str(order_id)) > 0
+            if order_result.success and order_result.order_id:
+                assert len(str(order_result.order_id)) > 0
         except Exception as e:
             pytest.skip(f"Order placement failed: {e}")
 
@@ -76,31 +78,31 @@ class TestREGC2_01_CancelOrder:
         not os.getenv('BYBIT_API_KEY'),
         reason="BYBIT_API_KEY не установлен"
     )
-    def test_cancel_order(self):
+    def test_cancel_order(self, mock_database):
         """Отмена ордера на testnet должна работать"""
         client = BybitRestClient(testnet=True)
+        om = OrderManager(client=client, db=mock_database)
         
         try:
             # Сначала создать ордер
-            place_result = client.place_order(
+            order_result = om.create_order(
+                category='linear',
                 symbol='BTCUSDT',
                 side='Buy',
-                orderType='Limit',
+                order_type='Limit',
                 qty=0.001,
                 price=49000.0,
             )
             
-            if isinstance(place_result, dict):
-                order_id = place_result.get('orderId') or place_result.get('order_id')
+            if order_result.success and order_result.order_id:
+                # Потом отменить
+                cancel_result = om.cancel_order(
+                    category='linear',
+                    symbol='BTCUSDT',
+                    order_id=order_result.order_id,
+                )
                 
-                if order_id:
-                    # Потом отменить
-                    cancel_result = client.cancel_order(
-                        symbol='BTCUSDT',
-                        orderId=order_id,
-                    )
-                    
-                    assert cancel_result is not None
+                assert cancel_result is not None
         except Exception as e:
             pytest.skip(f"Order cancellation failed: {e}")
     
@@ -108,21 +110,21 @@ class TestREGC2_01_CancelOrder:
         not os.getenv('BYBIT_API_KEY'),
         reason="BYBIT_API_KEY не установлен"
     )
-    def test_cancel_nonexistent_order_fails(self):
+    def test_cancel_nonexistent_order_fails(self, mock_database):
         """Отмена несуществующего ордера должна вернуть ошибку"""
         client = BybitRestClient(testnet=True)
+        om = OrderManager(client=client, db=mock_database)
         
         try:
             # Попытка отменить несуществующий ордер
-            result = client.cancel_order(
+            result = om.cancel_order(
+                category='linear',
                 symbol='BTCUSDT',
-                orderId='invalid_order_id_123',
+                order_id='invalid_order_id_123',
             )
             
-            # Должна быть ошибка или None
-            if result:
-                # Если есть результат, проверить что это ошибка
-                assert isinstance(result, dict)
+            # Результат должен быть, указывая на ошибку
+            assert result is not None
         except Exception as e:
             # Исключение ожидается
             assert True

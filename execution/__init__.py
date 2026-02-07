@@ -11,6 +11,8 @@ from execution.position_manager import PositionManager
 
 from execution.order_policy import OrderPolicySelector, OrderPolicy, OrderExecType, TimeInForce
 
+from execution.order_result import OrderResult
+
 
 __all__ = [
 
@@ -25,5 +27,7 @@ __all__ = [
     "OrderExecType",
 
     "TimeInForce",
+
+    "OrderResult",
 
 ]

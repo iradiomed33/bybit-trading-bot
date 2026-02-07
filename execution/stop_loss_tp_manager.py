@@ -371,12 +371,12 @@ class StopLossTakeProfitManager:
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
 
-        Выставить SL и TP ордера на бирже (reduceOnly)
+        Выставить SL и TP на позицию через Trading Stop API.
 
 
-        Для Bybit v5 это означает использование conditional ордеров
+        Использует Bybit v5 API /v5/position/trading-stop для установки
 
-        с triggerDirection и reduceOnly=true
+        Stop Loss и Take Profit непосредственно на позицию.
 
 
         Args:
@@ -389,6 +389,10 @@ class StopLossTakeProfitManager:
         Returns:
 
             (success: bool, sl_order_id, tp_order_id)
+
+            Note: sl_order_id и tp_order_id будут None, т.к. Trading Stop
+
+            не создает отдельные ордера, а устанавливает параметры на позицию.
 
         """
 
@@ -404,99 +408,63 @@ class StopLossTakeProfitManager:
 
             logger.debug(f"Exchange SL/TP disabled for {position_id}")
 
-            return True, None, None  # Успешно, но ордера не выставлены (виртуальный режим)
+            return True, None, None  # Успешно, но SL/TP не выставлены (виртуальный режим)
 
         try:
 
-            # Выставляем SL ордер (conditional, reduceOnly)
+            # Используем Trading Stop API для установки SL/TP на позицию
 
-            sl_result = self.order_manager.create_order(
-
-                category=category,
-
-                symbol=levels.symbol,
-
-                side="Sell" if levels.side == "Long" else "Buy",  # Противоположное направление
-
-                order_type="Market",
-
-                qty=float(levels.entry_qty),
-
-                reduce_only=True,  # Важно! Только закрытие позиции
-
-                stop_loss=str(levels.sl_price),  # Используем встроенный SL
-
-                trigger_by="LastPrice",
-
-                order_link_id=f"{position_id}_sl",
-
-            )
-
-            if sl_result.get("retCode") != 0:
-
-                logger.warning(
-
-                    f"Failed to place SL order for {position_id}: {sl_result.get('retMsg')}"
-
-                )
-
-                sl_order_id = None
-
-            else:
-
-                sl_order_id = sl_result.get("result", {}).get("orderId")
-
-                levels.sl_order_id = sl_order_id
-
-                logger.info(f"SL order placed: {sl_order_id} @ {levels.sl_price}")
-
-            # Выставляем TP ордер (conditional, reduceOnly)
-
-            tp_result = self.order_manager.create_order(
+            result = self.order_manager.set_trading_stop(
 
                 category=category,
 
                 symbol=levels.symbol,
 
-                side="Sell" if levels.side == "Long" else "Buy",  # Противоположное направление
+                position_idx=0,  # 0 для one-way mode (по умолчанию)
 
-                order_type="Market",
+                stop_loss=str(levels.sl_price) if levels.sl_price else None,
 
-                qty=float(levels.entry_qty),
+                take_profit=str(levels.tp_price) if levels.tp_price else None,
 
-                reduce_only=True,
+                sl_trigger_by="LastPrice",
 
-                take_profit=str(levels.tp_price),  # Используем встроенный TP
+                tp_trigger_by="LastPrice",
 
-                trigger_by="LastPrice",
-
-                order_link_id=f"{position_id}_tp",
+                tpsl_mode="Full",  # Применяем SL/TP ко всей позиции
 
             )
 
-            if tp_result.get("retCode") != 0:
+            if result.success:
 
-                logger.warning(
+                logger.info(
 
-                    f"Failed to place TP order for {position_id}: {tp_result.get('retMsg')}"
+                    f"✓ Trading stop set for {position_id}: "
+
+                    f"SL={levels.sl_price}, TP={levels.tp_price}"
 
                 )
 
-                tp_order_id = None
+                # Trading Stop не возвращает order IDs, сохраняем position_id как reference
+
+                levels.sl_order_id = f"{position_id}_sl_ts"
+
+                levels.tp_order_id = f"{position_id}_tp_ts"
+
+                return True, levels.sl_order_id, levels.tp_order_id
 
             else:
 
-                tp_order_id = tp_result.get("result", {}).get("orderId")
+                logger.error(
 
-                levels.tp_order_id = tp_order_id
+                    f"Failed to set trading stop for {position_id}: {result.error}"
 
-                logger.info(f"TP order placed: {tp_order_id} @ {levels.tp_price}")
+                )
 
-            return True, sl_order_id, tp_order_id
+                return False, None, None
 
         except Exception as e:
 
-            logger.error(f"Error placing exchange SL/TP for {position_id}: {e}")
+            logger.error(f"Error setting trading stop for {position_id}: {e}", exc_info=True)
 
             return False, None, None
 
@@ -674,7 +642,7 @@ class StopLossTakeProfitManager:
 
         return levels
 
-    def update_trailing_stop(self, position_id: str, current_price: Decimal) -> bool:
+    def update_trailing_stop(self, position_id: str, current_price: Decimal, category: str = "linear") -> bool:
         """
 
         Обновить trailing stop при новом благоприятном ценовом движении
@@ -685,6 +653,8 @@ class StopLossTakeProfitManager:
             position_id: ID позиции
 
             current_price: Текущая цена
+
+            category: Категория ордера ("linear" для фьючерсов)
 
 
         Returns:
@@ -711,6 +681,8 @@ class StopLossTakeProfitManager:
 
         trailing_distance = levels.atr * Decimal(str(self.config.trailing_multiplier))
 
+        updated = False
+
         if levels.side == "Long":
 
             # Для лонга trailing stop движется вверх
@@ -723,7 +695,7 @@ class StopLossTakeProfitManager:
 
                 levels.sl_price = new_sl
 
-                return True
+                updated = True
 
         else:  # Short
 
@@ -737,24 +709,40 @@ class StopLossTakeProfitManager:
 
                 levels.sl_price = new_sl
 
-                return True
+                updated = True
 
-        return False
+        # Если уровень обновился, обновляем его на бирже
+        if updated and self.config.use_exchange_sl_tp:
+
+            success, _, _ = self.update_sl_tp(position_id, category=category)
+
+            if not success:
+
+                logger.warning(f"Failed to update trailing stop on exchange for {position_id}")
+
+                # Откатываем изменение, если не удалось обновить на бирже
+                # (в реальности можно оставить виртуальное отслеживание)
+
+        return updated
 
     def get_levels(self, position_id: str) -> Optional[StopLossTakeProfitLevels]:
         """Получить текущие SL/TP уровни позиции"""
 
         return self._levels.get(position_id)
 
-    def close_position_levels(self, position_id: str) -> bool:
+    def close_position_levels(self, position_id: str, category: str = "linear") -> bool:
         """
 
         Закрыть SL/TP отслеживание для позиции (при её закрытии)
+
+        и отменить Trading Stop на бирже.
 
 
         Args:
 
             position_id: ID позиции
+
+            category: Категория ордера ("linear" для фьючерсов)
 
 
         Returns:
@@ -765,7 +753,43 @@ class StopLossTakeProfitManager:
 
         if position_id in self._levels:
 
-            levels = self._levels.pop(position_id)
+            levels = self._levels[position_id]
+
+            # Отменяем Trading Stop на бирже, если был установлен
+
+            if self.config.use_exchange_sl_tp and (levels.sl_order_id or levels.tp_order_id):
+
+                try:
+
+                    result = self.order_manager.cancel_trading_stop(
+
+                        category=category,
+
+                        symbol=levels.symbol,
+
+                        position_idx=0,
+
+                    )
+
+                    if result.success:
+
+                        logger.info(f"✓ Trading stop cancelled for {position_id}")
+
+                    else:
+
+                        logger.warning(
+
+                            f"Failed to cancel trading stop for {position_id}: {result.error}"
+
+                        )
+
+                except Exception as e:
+
+                    logger.error(f"Error cancelling trading stop for {position_id}: {e}")
+
+            # Удаляем из памяти
+
+            self._levels.pop(position_id)
 
             logger.info(
 
@@ -822,3 +846,57 @@ class StopLossTakeProfitManager:
             logger.info(f"Cleaned up {len(expired_ids)} old SL/TP records")
 
         return len(expired_ids)
+
+    def update_sl_tp(
+        self, position_id: str, category: str = "linear"
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Обновить (re-place) SL/TP на бирже при изменении уровней.
+
+        Используется при trailing stop или изменении позиции.
+
+        Args:
+            position_id: ID позиции
+            category: Категория ордера ("linear" для фьючерсов)
+
+        Returns:
+            (success: bool, sl_order_id, tp_order_id)
+        """
+        if position_id not in self._levels:
+            logger.error(f"Position {position_id} not found in SL/TP manager")
+            return False, None, None
+
+        levels = self._levels[position_id]
+
+        if not self.config.use_exchange_sl_tp:
+            logger.debug(f"Exchange SL/TP disabled for {position_id}")
+            return True, None, None
+
+        try:
+            # Обновляем Trading Stop на бирже с новыми уровнями
+            result = self.order_manager.set_trading_stop(
+                category=category,
+                symbol=levels.symbol,
+                position_idx=0,
+                stop_loss=str(levels.sl_price) if levels.sl_price else None,
+                take_profit=str(levels.tp_price) if levels.tp_price else None,
+                sl_trigger_by="LastPrice",
+                tp_trigger_by="LastPrice",
+                tpsl_mode="Full",
+            )
+
+            if result.success:
+                logger.info(
+                    f"✓ Trading stop updated for {position_id}: "
+                    f"SL={levels.sl_price}, TP={levels.tp_price}"
+                )
+                return True, levels.sl_order_id, levels.tp_order_id
+            else:
+                logger.error(
+                    f"Failed to update trading stop for {position_id}: {result.error}"
+                )
+                return False, None, None
+
+        except Exception as e:
+            logger.error(f"Error updating trading stop for {position_id}: {e}", exc_info=True)
+            return False, None, None
