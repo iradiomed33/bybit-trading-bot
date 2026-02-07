@@ -247,14 +247,22 @@ class RiskMonitorService:
                 }
             
             position = positions[0]
-            size = Decimal(str(position.get("size", 0)))
-            leverage = Decimal(str(position.get("leverage", 0)))
             
-            # Calculate notional = size * mark_price
-            mark_price = Decimal(str(position.get("markPrice", 0)))
+            # Safe decimal conversion with fallback
+            def safe_decimal(value, default="0"):
+                """Safely convert to Decimal, handling empty strings and None"""
+                if value is None or value == "" or value == "None":
+                    return Decimal(default)
+                try:
+                    return Decimal(str(value))
+                except:
+                    return Decimal(default)
+            
+            size = safe_decimal(position.get("size", 0))
+            leverage = safe_decimal(position.get("leverage", 0))
+            mark_price = safe_decimal(position.get("markPrice", 0))
             notional = size * mark_price
-            
-            unrealized_pnl = Decimal(str(position.get("unrealisedPnl", 0)))
+            unrealized_pnl = safe_decimal(position.get("unrealisedPnl", 0))
             
             return {
                 "size": size,
@@ -265,7 +273,7 @@ class RiskMonitorService:
             }
             
         except Exception as e:
-            logger.error(f"Error getting position info: {e}")
+            logger.error(f"Error getting position info: {e}", exc_info=True)
             return {
                 "size": Decimal("0"),
                 "leverage": Decimal("0"),

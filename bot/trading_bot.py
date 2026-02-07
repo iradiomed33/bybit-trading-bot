@@ -233,6 +233,20 @@ class TradingBot:
 
             self.kill_switch_manager = None
 
+        # Advanced Risk Limits (D2 - для проверки leverage/notional/daily_loss/drawdown)
+        # ВАЖНО: Создаем ДО RiskMonitorService, т.к. он использует этот компонент
+        if mode == "live":
+            risk_config = RiskLimitsConfig(
+                max_leverage=Decimal("10"),
+                max_notional=Decimal("50000"),
+                daily_loss_limit_percent=Decimal("5"),
+                max_drawdown_percent=Decimal("10"),
+            )
+            self.advanced_risk_limits = AdvancedRiskLimits(self.db, risk_config)
+            logger.info("Advanced risk limits initialized (leverage/notional/daily_loss/drawdown)")
+        else:
+            self.advanced_risk_limits = None
+
         # Reconciliation Service (для синхронизации состояния с биржей)
         if mode == "live":
             from execution.reconciliation import ReconciliationService
@@ -353,30 +367,6 @@ class TradingBot:
         self.circuit_breaker = CircuitBreaker()
 
         self.kill_switch = KillSwitch(self.db)
-
-        # Advanced Risk Limits (D2 - для проверки leverage/notional/daily_loss/drawdown)
-
-        if mode == "live":
-
-            risk_config = RiskLimitsConfig(
-
-                max_leverage=Decimal("10"),
-
-                max_notional=Decimal("50000"),
-
-                daily_loss_limit_percent=Decimal("5"),
-
-                max_drawdown_percent=Decimal("10"),
-
-            )
-
-            self.advanced_risk_limits = AdvancedRiskLimits(self.db, risk_config)
-
-            logger.info("Advanced risk limits initialized (leverage/notional/daily_loss/drawdown)")
-
-        else:
-
-            self.advanced_risk_limits = None
 
         # Paper mode execution components
 
@@ -781,7 +771,9 @@ class TradingBot:
 
                 df[col] = df[col].astype(float)
 
-            df = df.sort_values("timestamp").reset_index(drop=True)
+            # Sort by timestamp and set as DatetimeIndex for VWAP calculation
+            df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
+            df = df.sort_values("timestamp").set_index("timestamp")
 
             logger.debug(f"Loaded {len(df)} candles for 1h timeframe")
 

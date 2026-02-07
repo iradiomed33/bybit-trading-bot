@@ -279,7 +279,7 @@ class ReconciliationService:
         Returns:
             List of order dicts
         """
-        response = self.client.post(
+        response = self.client.get(
             "/v5/order/realtime",
             params={
                 "category": "linear",
@@ -301,7 +301,7 @@ class ReconciliationService:
         Returns:
             List of execution dicts
         """
-        response = self.client.post(
+        response = self.client.get(
             "/v5/execution/list",
             params={
                 "category": "linear",

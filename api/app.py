@@ -36,6 +36,10 @@ import jwt
 
 import os
 
+import threading
+
+import time
+
 from datetime import datetime, timedelta
 
 from pathlib import Path
@@ -55,6 +59,10 @@ from signal_logger import get_signal_logger
 logger = setup_logger(__name__)
 
 signal_logger = get_signal_logger()
+
+# Global bot instance
+bot_instance = None
+bot_thread = None
 
 
 # ============================================================================
@@ -233,6 +241,17 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("API server shutdown")
+    
+    # Stop bot if running
+    global bot_instance, bot_thread, bot_status
+    if bot_instance:
+        logger.info("Stopping bot on server shutdown...")
+        bot_instance.stop()
+        if bot_thread and bot_thread.is_alive():
+            bot_thread.join(timeout=3.0)
+        bot_instance = None
+        bot_thread = None
+        bot_status["is_running"] = False
 
     # Закрыть все WebSocket соединения
 
@@ -1376,16 +1395,46 @@ async def get_bot_status():
 async def start_bot():
     """Запустить бота"""
 
-    global bot_status
+    global bot_status, bot_instance, bot_thread
 
     if bot_status["is_running"]:
 
         return {"status": "already_running", "message": "Bot is already running"}
 
     try:
-
+        # Import here to avoid circular dependencies
+        from bot.trading_bot import TradingBot
+        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
+        
+        # Get config
+        config = get_config()
+        mode = config.get("trading.mode") or "paper"
+        testnet = config.get("trading.testnet", True)
+        
+        # Create strategies
+        strategies = [
+            TrendPullbackStrategy(),
+            BreakoutStrategy(),
+            MeanReversionStrategy(),
+        ]
+        
+        # Create bot instance
+        bot_instance = TradingBot(mode=mode, strategies=strategies, testnet=testnet)
+        
+        # Run bot in separate thread
+        def run_bot():
+            try:
+                logger.info(f"Starting bot thread in {mode} mode...")
+                bot_instance.run()
+            except Exception as e:
+                logger.error(f"Bot thread error: {e}", exc_info=True)
+                bot_status["is_running"] = False
+        
+        bot_thread = threading.Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+        
         bot_status["is_running"] = True
-
+        bot_status["mode"] = mode
         bot_status["last_started"] = datetime.now().isoformat()
 
         # Отправляем обновление всем WebSocket клиентам
@@ -1398,7 +1447,7 @@ async def start_bot():
 
                 "is_running": True,
 
-                "message": "🚀 Bot started",
+                "message": f"🚀 Bot started in {mode} mode",
 
                 "timestamp": datetime.now().isoformat(),
 
@@ -1406,13 +1455,15 @@ async def start_bot():
 
         )
 
-        logger.info("Bot started via API")
+        logger.info(f"Bot started via API in {mode} mode")
 
         return {
 
             "status": "started",
 
-            "message": "Bot started successfully",
+            "message": f"Bot started successfully in {mode} mode",
+
+            "mode": mode,
 
             "timestamp": datetime.now().isoformat(),
 
@@ -1422,7 +1473,7 @@ async def start_bot():
 
         bot_status["is_running"] = False
 
-        logger.error(f"Failed to start bot: {e}")
+        logger.error(f"Failed to start bot: {e}", exc_info=True)
 
         return {"status": "error", "message": str(e)}, 500
 
@@ -1431,13 +1482,26 @@ async def start_bot():
 async def stop_bot():
     """Остановить бота"""
 
-    global bot_status
+    global bot_status, bot_instance, bot_thread
 
     if not bot_status["is_running"]:
 
         return {"status": "already_stopped", "message": "Bot is not running"}
 
     try:
+        # Stop bot if running
+        if bot_instance:
+            logger.info("Stopping bot instance...")
+            bot_instance.stop()
+            
+            # Wait for thread to finish (with timeout)
+            if bot_thread and bot_thread.is_alive():
+                bot_thread.join(timeout=5.0)
+                if bot_thread.is_alive():
+                    logger.warning("Bot thread did not stop cleanly")
+            
+            bot_instance = None
+            bot_thread = None
 
         bot_status["is_running"] = False
 
@@ -1475,7 +1539,7 @@ async def stop_bot():
 
     except Exception as e:
 
-        logger.error(f"Failed to stop bot: {e}")
+        logger.error(f"Failed to stop bot: {e}", exc_info=True)
 
         return {"status": "error", "message": str(e)}, 500
 

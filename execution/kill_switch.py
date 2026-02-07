@@ -573,9 +573,8 @@ class KillSwitchManager:
                     side=close_side,
                     order_type="Market",
                     qty=float(qty),
+                    reduce_only=True,  # Important: only reduce position, don't open new one
                     time_in_force="IOC",  # Immediate or Cancel
-                    # Note: reduceOnly is not a parameter in create_order
-                    # Market orders will naturally reduce the position
                 )
 
                 if result.success:
