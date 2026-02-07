@@ -13,6 +13,14 @@ from execution.order_policy import OrderPolicySelector, OrderPolicy, OrderExecTy
 
 from execution.order_result import OrderResult
 
+from execution.gateway import IExecutionGateway
+
+from execution.live_gateway import BybitLiveGateway
+
+from execution.paper_gateway import PaperGateway
+
+from execution.backtest_gateway import BacktestGateway
+
 
 __all__ = [
 
@@ -29,5 +37,13 @@ __all__ = [
     "TimeInForce",
 
     "OrderResult",
+
+    "IExecutionGateway",
+
+    "BybitLiveGateway",
+
+    "PaperGateway",
+
+    "BacktestGateway",
 
 ]
