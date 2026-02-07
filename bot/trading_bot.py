@@ -64,6 +64,8 @@ from risk.advanced_risk_limits import AdvancedRiskLimits, RiskLimitsConfig, Risk
 
 from risk.volatility_position_sizer import VolatilityPositionSizer, VolatilityPositionSizerConfig
 
+from risk.risk_monitor import RiskMonitorService, RiskMonitorConfig
+
 from execution import OrderManager, PositionManager
 
 from utils import retry_api_call
@@ -246,6 +248,29 @@ class TradingBot:
         else:
             self.reconciliation_service = None
 
+        # Risk Monitor Service (для реал-тайм мониторинга рисков по данным биржи)
+        if mode == "live":
+            risk_monitor_config = RiskMonitorConfig(
+                max_daily_loss_percent=5.0,  # 5% от equity
+                max_position_notional=50000.0,  # $50k max
+                max_leverage=10.0,  # 10x max
+                max_orders_per_symbol=10,  # 10 ордеров max
+                monitor_interval_seconds=30,  # Проверка каждые 30 секунд
+                enable_auto_kill_switch=True,  # Авто kill-switch при критических нарушениях
+            )
+            
+            self.risk_monitor = RiskMonitorService(
+                account_client=self.account_client,
+                kill_switch_manager=self.kill_switch_manager,
+                advanced_risk_limits=self.advanced_risk_limits,
+                db=self.db,
+                symbol=symbol,
+                config=risk_monitor_config,
+            )
+            logger.info("Risk monitor service initialized")
+        else:
+            self.risk_monitor = None
+
         # Инициализируем обработчик сигналов для позиций (flip/add/ignore)
 
         if mode == "live":
@@ -416,6 +441,26 @@ class TradingBot:
             except Exception as e:
                 logger.error(f"Initial reconciliation failed: {e}", exc_info=True)
                 # Продолжаем работу даже если сверка не удалась
+
+        # Запускаем Risk Monitor для реал-тайм проверки лимитов (для live режима)
+        if self.mode == "live" and self.risk_monitor:
+            logger.info("Starting risk monitoring...")
+            try:
+                # Первоначальная проверка лимитов
+                initial_check = self.risk_monitor.run_monitoring_check()
+                logger.info(f"Initial risk check: decision={initial_check['decision'].value}")
+                
+                # Если уже критические нарушения - не запускаемся
+                if initial_check["decision"] == RiskDecision.STOP:
+                    logger.critical("CRITICAL risk violations detected! Cannot start trading.")
+                    return
+                
+                # Запускаем фоновый поток для периодического мониторинга
+                self.risk_monitor.start_monitoring()
+                logger.info("Risk monitoring started")
+            except Exception as e:
+                logger.error(f"Risk monitoring setup failed: {e}", exc_info=True)
+                # Продолжаем работу даже если мониторинг не удался
 
         self.is_running = True
 
@@ -2036,3 +2081,11 @@ class TradingBot:
         # Остановить reconciliation service если запущен
         if self.mode == "live" and self.reconciliation_service:
             self.reconciliation_service.stop_loop()
+            logger.info("Reconciliation service stopped")
+        
+        # Остановить risk monitor если запущен
+        if self.mode == "live" and self.risk_monitor:
+            self.risk_monitor.stop_monitoring()
+            logger.info("Risk monitor stopped")
+
+        logger.info("Bot stopped successfully")
