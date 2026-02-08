@@ -90,39 +90,35 @@ class KillSwitch:
 
         cursor = self.db.conn.cursor()
 
-        threshold = float(self.db.conn.execute("SELECT strftime('%s', 'now', '-1 day')").fetchone()[0])
-        # Берём самую свежую активацию и самый свежий сброс
+        # Убрано ограничение по времени - ищем последнюю активацию и последний сброс
+        # независимо от того, когда они произошли
         cursor.execute(
             """
             SELECT MAX(CAST(timestamp AS REAL)) FROM errors
-            WHERE error_type = 'kill_switch_activated' AND CAST(timestamp AS REAL) > ?
-        """,
-            (threshold,),
+            WHERE error_type = 'kill_switch_activated'
+        """
         )
         last_activation = cursor.fetchone()[0]
 
         cursor.execute(
             """
             SELECT MAX(CAST(timestamp AS REAL)) FROM errors
-            WHERE error_type = 'kill_switch_reset' AND CAST(timestamp AS REAL) > ?
-        """,
-            (threshold,),
+            WHERE error_type = 'kill_switch_reset'
+        """
         )
         last_reset = cursor.fetchone()[0]
 
-        # Если активаций в окне нет — оставляем состояние как есть,
-        # но явный reset в окне всё равно снимает блокировку
+        # Если нет активаций - не активирован
         if not last_activation:
-            if last_reset:
-                self.is_activated = False
-                return False
-            return self.is_activated
+            self.is_activated = False
+            return False
 
-        # Если есть сброс новее активации — считаем выключенным
+        # Если есть сброс новее активации - не активирован
         if last_reset and last_reset > last_activation:
             self.is_activated = False
             return False
 
+        # Иначе - активирован (есть активация без соответствующего сброса)
         if not self.is_activated:
 
             logger.warning("Kill switch was previously activated (found in DB)")
