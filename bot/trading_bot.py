@@ -414,13 +414,25 @@ class TradingBot:
         # Проверка kill switch (проверяем оба - старый и новый)
         # 1. Старый KillSwitch (проверяет таблицу errors)
         if self.kill_switch.check_status():
-            logger.error("Kill switch is active! Cannot start. Reset with confirmation first.")
+            logger.error("❌ Kill switch is active! Cannot start.")
+            logger.error("━" * 70)
+            logger.error("To reset kill switch, run ONE of these commands:")
+            logger.error("  1) python cli.py reset-kill-switch")
+            logger.error("  2) python reset_killswitch.py")
+            logger.error("  3) Open UI and click 'Reset Kill Switch' button")
+            logger.error("━" * 70)
+            logger.info("See СРОЧНО_СБРОС_KILLSWITCH.md for detailed instructions")
             return
         
         # 2. KillSwitchManager (проверяет флаг trading_disabled)
         if self.mode == "live" and self.kill_switch_manager:
             if not self.kill_switch_manager.can_trade():
-                logger.error("Trading is disabled (trading_disabled flag set)! Cannot start. Reset with confirmation first.")
+                logger.error("❌ Trading is disabled (trading_disabled flag set)! Cannot start.")
+                logger.error("━" * 70)
+                logger.error("To reset, run ONE of these commands:")
+                logger.error("  1) python cli.py reset-kill-switch")
+                logger.error("  2) python reset_killswitch.py")
+                logger.error("━" * 70)
                 return
 
         # Выполняем первоначальную сверку состояния с биржей (для live режима)
