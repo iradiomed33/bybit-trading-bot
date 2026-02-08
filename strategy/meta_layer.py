@@ -364,7 +364,7 @@ class NoTradeZones:
 
         df: pd.DataFrame, features: Dict[str, Any], error_count: int = 0
 
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
         """
 
         Проверить, разрешена ли торговля.
@@ -372,7 +372,7 @@ class NoTradeZones:
 
         Returns:
 
-            (allowed: bool, reason: str or None)
+            (allowed: bool, reason: str or None, details: dict or None)
 
         """
 
@@ -383,8 +383,16 @@ class NoTradeZones:
         has_anomaly = latest.get("has_anomaly", 0)
 
         if has_anomaly == 1:
-
-            return False, "Data anomaly detected"
+            # Собираем детали о том, какие именно аномалии сработали
+            anomaly_details = {}
+            if latest.get("anomaly_wick", 0) == 1:
+                anomaly_details["anomaly_wick"] = 1
+            if latest.get("anomaly_low_volume", 0) == 1:
+                anomaly_details["anomaly_low_volume"] = 1
+            if latest.get("anomaly_gap", 0) == 1:
+                anomaly_details["anomaly_gap"] = 1
+            
+            return False, "Data anomaly detected", anomaly_details
 
         # 2. Плохая ликвидность (широкий спред)
 
@@ -396,7 +404,7 @@ class NoTradeZones:
 
         if spread_percent > 10.0:  # Спред > 10% - это явно ошибка данных или запредельный спред
 
-            return False, f"Excessive spread: {spread_percent:.2f}%"
+            return False, f"Excessive spread: {spread_percent:.2f}%", {"spread_percent": spread_percent}
 
         # 3. Низкая глубина стакана
 
@@ -416,7 +424,7 @@ class NoTradeZones:
 
         if error_count > 5:  # Смягчено с 3
 
-            return False, f"Too many errors: {error_count}"
+            return False, f"Too many errors: {error_count}", {"error_count": error_count}
 
         # 5. Экстремальная волатильность
 
@@ -426,9 +434,9 @@ class NoTradeZones:
 
         if vol_regime == 1 and atr_percent > 10.0:  # ATR > 10% (смягчено с 5%)
 
-            return False, f"Extreme volatility: ATR={atr_percent:.2f}%"
+            return False, f"Extreme volatility: ATR={atr_percent:.2f}%", {"vol_regime": vol_regime, "atr_percent": atr_percent}
 
-        return True, None
+        return True, None, None
 
 
 class MetaLayer:
@@ -507,13 +515,23 @@ class MetaLayer:
 
         # 1. No-trade zones
 
-        trading_allowed, block_reason = self.no_trade_zones.is_trading_allowed(
+        trading_allowed, block_reason, block_details = self.no_trade_zones.is_trading_allowed(
 
             df, features, error_count
 
         )
 
         if not trading_allowed:
+            
+            # Объединяем reason и детали аномалий в values
+            values = {
+                "reason": block_reason,
+                "error_count": error_count,
+            }
+            
+            # Добавляем детали аномалий, если они есть
+            if block_details:
+                values.update(block_details)
 
             signal_logger.log_signal_rejected(
 
@@ -527,13 +545,7 @@ class MetaLayer:
 
                 reasons=["no_trade_zone"],
 
-                values={
-
-                    "reason": block_reason,
-
-                    "error_count": error_count,
-
-                },
+                values=values,
 
             )
 

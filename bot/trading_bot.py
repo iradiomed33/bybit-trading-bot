@@ -506,6 +506,9 @@ class TradingBot:
 
                 features = data.get("orderflow_features", {})
 
+                # Добавляем symbol в features для корректного логирования
+                features["symbol"] = self.symbol
+
                 # 3. Проверяем circuit breaker
 
                 if not self.circuit_breaker.is_trading_allowed():
