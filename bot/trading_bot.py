@@ -22,6 +22,8 @@ Trading Bot: главный класс для paper и live режимов.
 
 import time
 
+import pandas as pd
+
 from typing import Dict, Any, Optional
 
 from decimal import Decimal
@@ -55,6 +57,8 @@ from execution.paper_trading_simulator import PaperTradingSimulator, PaperTradin
 from execution.trade_metrics import TradeMetricsCalculator, EquityCurve
 
 from data.features import FeaturePipeline
+
+from data.indicators import TechnicalIndicators
 
 from strategy.meta_layer import MetaLayer
 
@@ -340,6 +344,9 @@ class TradingBot:
             self.signal_handler = None
 
         self.pipeline = FeaturePipeline()
+        
+        # Инициализируем TechnicalIndicators для расчета индикаторов в MTF кэше (BUG-007)
+        self.indicators = TechnicalIndicators()
         
         # Читаем настройки meta_layer из конфига
         use_mtf = self.config.get("meta_layer.use_mtf", True)
@@ -851,32 +858,64 @@ class TradingBot:
 
                             if tf_candles:
 
-                                # Добавить последнюю свечу в кэш
-
-                                last_candle = tf_candles[0]
-
+                                # BUG-007 FIX: Рассчитываем индикаторы для MTF кэша
+                                # Преобразуем все свечи в DataFrame для корректного расчета индикаторов
+                                
+                                tf_df_data = []
+                                for candle in reversed(tf_candles):  # Reversed т.к. API возвращает в обратном порядке
+                                    tf_df_data.append({
+                                        "timestamp": int(candle[0]),
+                                        "open": float(candle[1]),
+                                        "high": float(candle[2]),
+                                        "low": float(candle[3]),
+                                        "close": float(candle[4]),
+                                        "volume": float(candle[5]),
+                                    })
+                                
+                                tf_df = pd.DataFrame(tf_df_data)
+                                
+                                # Рассчитываем индикаторы, необходимые для confluence
+                                # EMA 20 для всех таймфреймов (используется для определения тренда)
+                                tf_df = self.indicators.calculate_ema(tf_df, periods=[20])
+                                
+                                # ATR и vol_regime для 15m (используется для волатильности)
+                                if interval == "15":
+                                    tf_df = self.indicators.calculate_atr(tf_df)
+                                    # atr_percent = ATR / close * 100
+                                    if "atr" in tf_df.columns:
+                                        tf_df["atr_percent"] = (tf_df["atr"] / tf_df["close"]) * 100
+                                    # vol_regime: 1 = high, 0 = normal/low
+                                    if "atr_percent" in tf_df.columns:
+                                        tf_df["vol_regime"] = (tf_df["atr_percent"] > 3.0).astype(int)
+                                
+                                # Берем последнюю строку с рассчитанными индикаторами
+                                last_row = tf_df.iloc[-1]
+                                
+                                # Добавляем в кэш с индикаторами
                                 candle_dict = {
-
-                                    "timestamp": last_candle[0],
-
-                                    "open": float(last_candle[1]),
-
-                                    "high": float(last_candle[2]),
-
-                                    "low": float(last_candle[3]),
-
-                                    "close": float(last_candle[4]),
-
-                                    "volume": float(last_candle[5]),
-
+                                    "timestamp": int(last_row["timestamp"]),
+                                    "open": float(last_row["open"]),
+                                    "high": float(last_row["high"]),
+                                    "low": float(last_row["low"]),
+                                    "close": float(last_row["close"]),
+                                    "volume": float(last_row["volume"]),
                                 }
+                                
+                                # Добавляем индикаторы если есть
+                                if "ema_20" in last_row and pd.notna(last_row["ema_20"]):
+                                    candle_dict["ema_20"] = float(last_row["ema_20"])
+                                
+                                if interval == "15":
+                                    if "atr_percent" in last_row and pd.notna(last_row["atr_percent"]):
+                                        candle_dict["atr_percent"] = float(last_row["atr_percent"])
+                                    if "vol_regime" in last_row and pd.notna(last_row["vol_regime"]):
+                                        candle_dict["vol_regime"] = int(last_row["vol_regime"])
 
                                 self.meta_layer.timeframe_cache.add_candle(interval, candle_dict)
 
                                 logger.debug(
-
-                                    f"Loaded {len(tf_candles)} candles for {tf_name} timeframe"
-
+                                    f"Loaded {len(tf_candles)} candles for {tf_name} timeframe "
+                                    f"(with indicators: ema_20={candle_dict.get('ema_20', 'N/A')})"
                                 )
 
                         else:
