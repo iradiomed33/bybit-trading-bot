@@ -200,6 +200,26 @@ class TestMultiSymbolBot:
             assert mock_bot2.is_running is False
             assert bot.is_running is False
 
+    def test_threading_initialization(self, strategies):
+        """Тест: bot_threads словарь инициализируется корректно"""
+        
+        symbols = ["BTCUSDT", "ETHUSDT"]
+        
+        with patch('bot.multi_symbol_bot.TradingBot') as MockBot:
+            MockBot.return_value = Mock()
+            
+            bot = MultiSymbolTradingBot(
+                mode="paper",
+                strategies=strategies,
+                testnet=True,
+                symbols=symbols
+            )
+            
+            # Проверяем что bot_threads пустой при инициализации
+            assert hasattr(bot, 'bot_threads')
+            assert isinstance(bot.bot_threads, dict)
+            assert len(bot.bot_threads) == 0
+
 
 class TestMultiSymbolIntegration:
     """Интеграционные тесты для multi-symbol"""
