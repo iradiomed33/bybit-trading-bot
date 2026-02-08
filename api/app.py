@@ -1595,18 +1595,50 @@ async def reset_killswitch():
     
     try:
         from risk.kill_switch import KillSwitch
+        from execution.kill_switch import KillSwitchManager
+        from exchange.base_client import BybitRestClient
         
         # Create database connection
         db = Database()
         
-        # Create KillSwitch instance
+        # Reset old KillSwitch (saves to errors table)
         kill_switch = KillSwitch(db)
+        success_old = kill_switch.reset("RESET")
         
-        # Reset with confirmation
-        success = kill_switch.reset("RESET")
+        # Reset KillSwitchManager (clears trading_disabled flag)
+        # We try two approaches:
+        # 1. If we can create KillSwitchManager, use its reset() method
+        # 2. Otherwise, directly clear the trading_disabled flag in DB
+        success_manager = False
+        try:
+            config = get_config()
+            rest_client = BybitRestClient(
+                api_key=config.api_key,
+                api_secret=config.api_secret,
+                testnet=config.testnet
+            )
+            kill_switch_manager = KillSwitchManager(
+                client=rest_client,
+                order_manager=None,  # Not needed for reset
+                db=db,
+                allowed_symbols=[]
+            )
+            kill_switch_manager.reset()
+            success_manager = True
+            logger.info("KillSwitchManager reset successfully")
+        except Exception as e:
+            logger.warning(f"Could not use KillSwitchManager for reset: {e}")
+            # Fallback: directly clear the flag in database
+            try:
+                db.save_config("trading_disabled", False)
+                success_manager = True
+                logger.info("trading_disabled flag cleared directly in database")
+            except Exception as e2:
+                logger.error(f"Failed to clear trading_disabled flag: {e2}")
+                success_manager = False
         
-        if success:
-            logger.info("Kill switch reset successfully via API")
+        if success_old and success_manager:
+            logger.info("Kill switch reset successfully via API (both old and new)")
             
             # Broadcast to WebSocket clients
             await broadcast_to_clients(
@@ -1630,6 +1662,77 @@ async def reset_killswitch():
     
     except Exception as e:
         logger.error(f"Failed to reset kill switch: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}, 500
+
+
+@app.get("/api/risk/daily_loss_limit")
+async def get_daily_loss_limit():
+    """Получить текущий лимит daily loss"""
+    try:
+        from storage.database import Database
+        
+        db = Database()
+        daily_loss_limit = db.get_config("daily_loss_limit_percent", 5.0)
+        db.close()
+        
+        return {
+            "status": "success",
+            "daily_loss_limit_percent": daily_loss_limit,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get daily loss limit: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}, 500
+
+
+@app.post("/api/risk/daily_loss_limit")
+async def set_daily_loss_limit(body: Dict[str, Any]):
+    """Установить лимит daily loss"""
+    try:
+        from storage.database import Database
+        
+        value = body.get("value")
+        if value is None:
+            return {"status": "error", "message": "value is required"}, 400
+        
+        # Validation
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            return {"status": "error", "message": "value must be a number"}, 400
+        
+        if value < 0.5 or value > 20:
+            return {
+                "status": "error", 
+                "message": "daily_loss_limit_percent must be between 0.5 and 20"
+            }, 400
+        
+        # Save to database
+        db = Database()
+        db.save_config("daily_loss_limit_percent", value)
+        db.close()
+        
+        logger.info(f"Daily loss limit updated to {value}% via API")
+        
+        # Broadcast to WebSocket clients
+        await broadcast_to_clients(
+            {
+                "type": "risk_config_updated",
+                "key": "daily_loss_limit_percent",
+                "value": value,
+                "message": f"Daily loss limit изменен на {value}%",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Daily loss limit установлен на {value}%",
+            "daily_loss_limit_percent": value,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to set daily loss limit: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}, 500
 
 

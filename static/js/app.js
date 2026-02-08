@@ -594,6 +594,14 @@ async function loadSettings() {
     document.getElementById('settingStopLoss').value = configData.risk_management?.stop_loss_percent || 2.0;
     document.getElementById('settingTakeProfit').value = configData.risk_management?.take_profit_percent || 5.0;
     
+    // Load daily loss limit from API
+    const dailyLossData = await apiCall('/risk/daily_loss_limit');
+    if (dailyLossData && dailyLossData.daily_loss_limit_percent) {
+        document.getElementById('settingDailyLossLimit').value = dailyLossData.daily_loss_limit_percent;
+    } else {
+        document.getElementById('settingDailyLossLimit').value = 5.0;  // Default
+    }
+    
     console.log('[loadSettings] Loaded symbols:', symbols);
 }
 
@@ -628,6 +636,23 @@ async function saveSettings() {
             saved = false;
             console.error(`[saveSettings] Failed to save ${key}`);
             break;
+        }
+    }
+    
+    // Save daily loss limit separately
+    if (saved) {
+        const dailyLossLimit = parseFloat(document.getElementById('settingDailyLossLimit').value);
+        if (dailyLossLimit >= 0.5 && dailyLossLimit <= 20) {
+            const dailyLossResult = await apiCall('/risk/daily_loss_limit', 'POST', { value: dailyLossLimit });
+            if (!dailyLossResult) {
+                saved = false;
+                console.error('[saveSettings] Failed to save daily loss limit');
+            } else {
+                console.log('[saveSettings] Daily loss limit saved:', dailyLossLimit);
+            }
+        } else {
+            showNotification('Daily Loss Limit должен быть между 0.5% и 20%', 'warning');
+            saved = false;
         }
     }
 

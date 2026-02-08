@@ -111,6 +111,7 @@ class KillSwitch:
         if count > 0 and not self.is_activated:
 
             logger.warning("Kill switch was previously activated (found in DB)")
+            logger.warning("To reset: python cli.py reset-kill-switch  OR  python reset_killswitch.py")
 
             self.is_activated = True
 

@@ -236,14 +236,23 @@ class TradingBot:
         # Advanced Risk Limits (D2 - для проверки leverage/notional/daily_loss/drawdown)
         # ВАЖНО: Создаем ДО RiskMonitorService, т.к. он использует этот компонент
         if mode == "live":
+            # Читаем daily loss limit из БД (по умолчанию 5%)
+            daily_loss_limit = Decimal(str(self.db.get_config("daily_loss_limit_percent", 5.0)))
+            logger.info(f"Daily loss limit loaded from config: {daily_loss_limit}%")
+            
             risk_config = RiskLimitsConfig(
                 max_leverage=Decimal("10"),
                 max_notional=Decimal("50000"),
-                daily_loss_limit_percent=Decimal("5"),
+                daily_loss_limit_percent=daily_loss_limit,  # Используем значение из БД
                 max_drawdown_percent=Decimal("10"),
+                # ИЗМЕНЕНО: Оставляем только daily loss check, остальные проверки отключены
+                enable_leverage_check=False,
+                enable_notional_check=False,
+                enable_daily_loss_check=True,
+                enable_drawdown_check=False,
             )
             self.advanced_risk_limits = AdvancedRiskLimits(self.db, risk_config)
-            logger.info("Advanced risk limits initialized (leverage/notional/daily_loss/drawdown)")
+            logger.info("Advanced risk limits initialized (ONLY daily_loss check enabled)")
         else:
             self.advanced_risk_limits = None
 
@@ -264,8 +273,11 @@ class TradingBot:
 
         # Risk Monitor Service (для реал-тайм мониторинга рисков по данным биржи)
         if mode == "live":
+            # Используем то же значение daily loss limit из БД
+            daily_loss_limit = float(self.db.get_config("daily_loss_limit_percent", 5.0))
+            
             risk_monitor_config = RiskMonitorConfig(
-                max_daily_loss_percent=5.0,  # 5% от equity
+                max_daily_loss_percent=daily_loss_limit,  # Используем значение из БД
                 max_position_notional=50000.0,  # $50k max
                 max_leverage=10.0,  # 10x max
                 max_orders_per_symbol=10,  # 10 ордеров max
@@ -411,13 +423,29 @@ class TradingBot:
 
         logger.info(f"Starting bot in {self.mode.upper()} mode...")
 
-        # Проверка kill switch
-
+        # Проверка kill switch (проверяем оба - старый и новый)
+        # 1. Старый KillSwitch (проверяет таблицу errors)
         if self.kill_switch.check_status():
-
-            logger.error("Kill switch is active! Cannot start. Reset with confirmation first.")
-
+            logger.error("❌ Kill switch is active! Cannot start.")
+            logger.error("━" * 70)
+            logger.error("To reset kill switch, run ONE of these commands:")
+            logger.error("  1) python cli.py reset-kill-switch")
+            logger.error("  2) python reset_killswitch.py")
+            logger.error("  3) Open UI and click 'Reset Kill Switch' button")
+            logger.error("━" * 70)
+            logger.info("See СРОЧНО_СБРОС_KILLSWITCH.md for detailed instructions")
             return
+        
+        # 2. KillSwitchManager (проверяет флаг trading_disabled)
+        if self.mode == "live" and self.kill_switch_manager:
+            if not self.kill_switch_manager.can_trade():
+                logger.error("❌ Trading is disabled (trading_disabled flag set)! Cannot start.")
+                logger.error("━" * 70)
+                logger.error("To reset, run ONE of these commands:")
+                logger.error("  1) python cli.py reset-kill-switch")
+                logger.error("  2) python reset_killswitch.py")
+                logger.error("━" * 70)
+                return
 
         # Выполняем первоначальную сверку состояния с биржей (для live режима)
         if self.mode == "live" and self.reconciliation_service:
