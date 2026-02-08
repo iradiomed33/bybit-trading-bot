@@ -1665,6 +1665,77 @@ async def reset_killswitch():
         return {"status": "error", "message": str(e)}, 500
 
 
+@app.get("/api/risk/daily_loss_limit")
+async def get_daily_loss_limit():
+    """Получить текущий лимит daily loss"""
+    try:
+        from storage.database import Database
+        
+        db = Database()
+        daily_loss_limit = db.get_config("daily_loss_limit_percent", 5.0)
+        db.close()
+        
+        return {
+            "status": "success",
+            "daily_loss_limit_percent": daily_loss_limit,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get daily loss limit: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}, 500
+
+
+@app.post("/api/risk/daily_loss_limit")
+async def set_daily_loss_limit(body: Dict[str, Any]):
+    """Установить лимит daily loss"""
+    try:
+        from storage.database import Database
+        
+        value = body.get("value")
+        if value is None:
+            return {"status": "error", "message": "value is required"}, 400
+        
+        # Validation
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            return {"status": "error", "message": "value must be a number"}, 400
+        
+        if value < 0.5 or value > 20:
+            return {
+                "status": "error", 
+                "message": "daily_loss_limit_percent must be between 0.5 and 20"
+            }, 400
+        
+        # Save to database
+        db = Database()
+        db.save_config("daily_loss_limit_percent", value)
+        db.close()
+        
+        logger.info(f"Daily loss limit updated to {value}% via API")
+        
+        # Broadcast to WebSocket clients
+        await broadcast_to_clients(
+            {
+                "type": "risk_config_updated",
+                "key": "daily_loss_limit_percent",
+                "value": value,
+                "message": f"Daily loss limit изменен на {value}%",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Daily loss limit установлен на {value}%",
+            "daily_loss_limit_percent": value,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to set daily loss limit: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}, 500
+
+
 async def broadcast_to_clients(message: Dict[str, Any]):
     """Отправить сообщение всем WebSocket клиентам"""
 

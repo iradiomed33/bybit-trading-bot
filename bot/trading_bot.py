@@ -236,10 +236,14 @@ class TradingBot:
         # Advanced Risk Limits (D2 - для проверки leverage/notional/daily_loss/drawdown)
         # ВАЖНО: Создаем ДО RiskMonitorService, т.к. он использует этот компонент
         if mode == "live":
+            # Читаем daily loss limit из БД (по умолчанию 5%)
+            daily_loss_limit = Decimal(str(self.db.get_config("daily_loss_limit_percent", 5.0)))
+            logger.info(f"Daily loss limit loaded from config: {daily_loss_limit}%")
+            
             risk_config = RiskLimitsConfig(
                 max_leverage=Decimal("10"),
                 max_notional=Decimal("50000"),
-                daily_loss_limit_percent=Decimal("5"),
+                daily_loss_limit_percent=daily_loss_limit,  # Используем значение из БД
                 max_drawdown_percent=Decimal("10"),
                 # ИЗМЕНЕНО: Оставляем только daily loss check, остальные проверки отключены
                 enable_leverage_check=False,
@@ -269,8 +273,11 @@ class TradingBot:
 
         # Risk Monitor Service (для реал-тайм мониторинга рисков по данным биржи)
         if mode == "live":
+            # Используем то же значение daily loss limit из БД
+            daily_loss_limit = float(self.db.get_config("daily_loss_limit_percent", 5.0))
+            
             risk_monitor_config = RiskMonitorConfig(
-                max_daily_loss_percent=5.0,  # 5% от equity
+                max_daily_loss_percent=daily_loss_limit,  # Используем значение из БД
                 max_position_notional=50000.0,  # $50k max
                 max_leverage=10.0,  # 10x max
                 max_orders_per_symbol=10,  # 10 ордеров max
