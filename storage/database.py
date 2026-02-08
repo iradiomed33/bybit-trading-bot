@@ -276,6 +276,17 @@ class Database:
 
         )
 
+        # Таблица для хранения конфигурационных параметров (key-value)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
         # Таблица SL/TP уровней (для отслеживания и истории)
 
         cursor.execute(
@@ -951,6 +962,62 @@ class Database:
         exec_id = cursor.lastrowid
         logger.debug(f"Execution saved: {exec_data.get('execId')}")
         return exec_id
+
+    def save_config(self, key: str, value: Any) -> None:
+        """
+        Сохранить конфигурационный параметр в БД.
+        
+        Args:
+            key: Ключ параметра
+            value: Значение параметра (будет сконвертировано в строку JSON)
+        """
+        import json
+        
+        cursor = self.conn.cursor()
+        value_str = json.dumps(value)
+        
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO config (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            """,
+            (key, value_str)
+        )
+        
+        self.conn.commit()
+        logger.debug(f"Config saved: {key} = {value}")
+    
+    def get_config(self, key: str, default: Any = None) -> Any:
+        """
+        Получить конфигурационный параметр из БД.
+        
+        Args:
+            key: Ключ параметра
+            default: Значение по умолчанию, если ключ не найден
+            
+        Returns:
+            Значение параметра или default
+        """
+        import json
+        
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT value FROM config WHERE key = ?
+            """,
+            (key,)
+        )
+        
+        row = cursor.fetchone()
+        
+        if row is None:
+            return default
+        
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to decode config value for key '{key}', returning as string")
+            return row[0]
 
     def close(self):
         """Закрыть соединение с БД"""
