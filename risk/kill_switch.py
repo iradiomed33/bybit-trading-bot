@@ -90,20 +90,14 @@ class KillSwitch:
 
         cursor = self.db.conn.cursor()
 
+        threshold = float(self.db.conn.execute("SELECT strftime('%s', 'now', '-1 day')").fetchone()[0])
         cursor.execute(
-
             """
-
             SELECT COUNT(*) FROM errors
-
             WHERE error_type = 'kill_switch_activated'
-
-            AND timestamp > ?
-
+            AND CAST(timestamp AS REAL) > ?
         """,
-
-            (self.db.conn.execute("SELECT strftime('%s', 'now', '-1 day')").fetchone()[0],),
-
+            (threshold,),
         )
 
         count = cursor.fetchone()[0]
