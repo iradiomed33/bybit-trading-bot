@@ -499,13 +499,15 @@ class TradingBot:
                 # 2. Строим фичи
 
                 df_with_features = self.pipeline.build_features(
-
-                    data["d"], orderbook=data.get("orderbook")
-
+                    data["d"], 
+                    orderbook=data.get("orderbook"),
+                    derivatives_data=data.get("derivatives_data")
                 )
 
-                features = data.get("orderflow_features", {})
-
+                # orderflow_features теперь в DataFrame, извлекаем их оттуда
+                # Создаем features dict для передачи в стратегии
+                features = {}
+                
                 # Добавляем symbol в features для корректного логирования
                 features["symbol"] = self.symbol
 
@@ -888,15 +890,14 @@ class TradingBot:
 
             orderbook = None
 
-            orderflow_features = {}
-
             if orderbook_resp and orderbook_resp.get("retCode") == 0:
 
                 result = orderbook_resp.get("result", {})
 
                 orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
-
-                orderflow_features = self.pipeline.calculate_orderflow_features(orderbook)
+                
+                # orderflow_features будут посчитаны в build_features()
+                # Убираем дублирующий расчет здесь
 
             # Деривативные данные с retry logic (могут быть rate limits)
 
@@ -1043,8 +1044,6 @@ class TradingBot:
                 "d": df,
 
                 "orderbook": orderbook,
-
-                "orderflow_features": orderflow_features,
 
                 "derivatives_data": derivatives_data,
 
