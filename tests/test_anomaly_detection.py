@@ -116,10 +116,10 @@ class TestAnomalyDetection:
         """
         Тест: NoTradeZones.is_trading_allowed возвращает детали аномалии
         """
-        # Создаем DataFrame с аномалией wick
+        # Создаем DataFrame с аномалией wick на ПОСЛЕДНЕЙ ЗАКРЫТОЙ свече (iloc[-2])
         df = pd.DataFrame({
-            "has_anomaly": [0, 0, 1],
-            "anomaly_wick": [0, 0, 1],
+            "has_anomaly": [0, 1, 0],
+            "anomaly_wick": [0, 1, 0],
             "anomaly_low_volume": [0, 0, 0],
             "anomaly_gap": [0, 0, 0],
             "vol_regime": [0, 0, 0],
@@ -145,11 +145,11 @@ class TestAnomalyDetection:
         """
         Тест: NoTradeZones возвращает все сработавшие типы аномалий
         """
-        # Создаем DataFrame с несколькими аномалиями
+        # Создаем DataFrame с несколькими аномалиями на ПОСЛЕДНЕЙ ЗАКРЫТОЙ свече (iloc[-2])
         df = pd.DataFrame({
-            "has_anomaly": [0, 0, 1],
-            "anomaly_wick": [0, 0, 1],
-            "anomaly_low_volume": [0, 0, 1],
+            "has_anomaly": [0, 1, 0],
+            "anomaly_wick": [0, 1, 0],
+            "anomaly_low_volume": [0, 1, 0],
             "anomaly_gap": [0, 0, 0],
             "vol_regime": [0, 0, 0],
             "atr_percent": [1.0, 1.0, 1.0]
@@ -188,6 +188,86 @@ class TestAnomalyDetection:
         assert allowed is True, "Торговля должна быть разрешена при отсутствии аномалий"
         assert reason is None, "Причина должна быть None"
         assert details is None, "Детали должны быть None"
+
+    def test_no_trade_zones_uses_closed_candle(self):
+        """
+        Тест: NoTradeZones использует последнюю ЗАКРЫТУЮ свечу (iloc[-2]),
+        а не текущую формирующуюся (iloc[-1]) для проверки аномалий
+        """
+        # Создаем DataFrame где:
+        # - Последняя закрытая свеча (iloc[-2]) имеет аномалию
+        # - Текущая формирующаяся свеча (iloc[-1]) без аномалии
+        df = pd.DataFrame({
+            "has_anomaly": [0, 1, 0],
+            "anomaly_wick": [0, 1, 0],
+            "anomaly_low_volume": [0, 0, 0],
+            "anomaly_gap": [0, 0, 0],
+            "vol_regime": [0, 0, 0],
+            "atr_percent": [1.0, 1.0, 1.0]
+        })
+        
+        features = {}
+        
+        # Вызываем is_trading_allowed
+        allowed, reason, details = NoTradeZones.is_trading_allowed(df, features, error_count=0)
+        
+        # Торговля должна быть заблокирована, т.к. последняя ЗАКРЫТАЯ свеча имеет аномалию
+        assert allowed is False, "Торговля должна быть заблокирована при аномалии в последней закрытой свече"
+        assert reason == "Data anomaly detected", "Причина должна быть 'Data anomaly detected'"
+        assert details is not None, "Детали должны быть возвращены"
+        assert details.get("anomaly_wick") == 1, "Детали должны содержать anomaly_wick=1"
+
+    def test_no_trade_zones_ignores_current_forming_candle_anomaly(self):
+        """
+        Тест: NoTradeZones игнорирует аномалии в текущей формирующейся свече,
+        проверяя только последнюю закрытую свечу
+        """
+        # Создаем DataFrame где:
+        # - Последняя закрытая свеча (iloc[-2]) БЕЗ аномалии
+        # - Текущая формирующаяся свеча (iloc[-1]) С аномалией (doji с тенями)
+        df = pd.DataFrame({
+            "has_anomaly": [0, 0, 1],
+            "anomaly_wick": [0, 0, 1],
+            "anomaly_low_volume": [0, 0, 0],
+            "anomaly_gap": [0, 0, 0],
+            "vol_regime": [0, 0, 0],
+            "atr_percent": [1.0, 1.0, 1.0]
+        })
+        
+        features = {}
+        
+        # Вызываем is_trading_allowed
+        allowed, reason, details = NoTradeZones.is_trading_allowed(df, features, error_count=0)
+        
+        # Торговля должна быть РАЗРЕШЕНА, т.к. последняя закрытая свеча БЕЗ аномалии
+        # (текущая формирующаяся свеча игнорируется)
+        assert allowed is True, "Торговля должна быть разрешена, т.к. аномалия только в формирующейся свече"
+        assert reason is None, "Причина должна быть None"
+        assert details is None, "Детали должны быть None"
+
+    def test_no_trade_zones_single_candle_fallback(self):
+        """
+        Тест: NoTradeZones корректно обрабатывает случай с единственной свечой
+        """
+        # Создаем DataFrame с одной свечой (нет закрытой свечи)
+        df = pd.DataFrame({
+            "has_anomaly": [1],
+            "anomaly_wick": [1],
+            "anomaly_low_volume": [0],
+            "anomaly_gap": [0],
+            "vol_regime": [0],
+            "atr_percent": [1.0]
+        })
+        
+        features = {}
+        
+        # Вызываем is_trading_allowed
+        allowed, reason, details = NoTradeZones.is_trading_allowed(df, features, error_count=0)
+        
+        # Должна использоваться единственная свеча, торговля блокируется
+        assert allowed is False, "Торговля должна быть заблокирована при единственной свече с аномалией"
+        assert reason == "Data anomaly detected", "Причина должна быть 'Data anomaly detected'"
+        assert details is not None, "Детали должны быть возвращены"
 
 
 class TestSymbolPropagation:

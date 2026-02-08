@@ -376,20 +376,30 @@ class NoTradeZones:
 
         """
 
-        latest = df.iloc[-1]
+        # Для проверки качества данных используем последнюю ЗАКРЫТУЮ свечу (iloc[-2]),
+        # а не текущую формирующуюся (iloc[-1]), т.к. формирующаяся свеча может иметь
+        # очень малое тело (doji) и нормальные тени, что ведет к ложным срабатываниям
+        if len(df) < 2:
+            # Если меньше 2 свечей, используем последнюю (нет выбора)
+            candle_for_quality_check = df.iloc[-1]
+        else:
+            # Используем последнюю закрытую свечу
+            candle_for_quality_check = df.iloc[-2]
+        
+        latest = df.iloc[-1]  # Для других проверок (волатильность) используем текущую
 
         # 1. Аномалия данных
 
-        has_anomaly = latest.get("has_anomaly", 0)
+        has_anomaly = candle_for_quality_check.get("has_anomaly", 0)
 
         if has_anomaly == 1:
             # Собираем детали о том, какие именно аномалии сработали
             anomaly_details = {}
-            if latest.get("anomaly_wick", 0) == 1:
+            if candle_for_quality_check.get("anomaly_wick", 0) == 1:
                 anomaly_details["anomaly_wick"] = 1
-            if latest.get("anomaly_low_volume", 0) == 1:
+            if candle_for_quality_check.get("anomaly_low_volume", 0) == 1:
                 anomaly_details["anomaly_low_volume"] = 1
-            if latest.get("anomaly_gap", 0) == 1:
+            if candle_for_quality_check.get("anomaly_gap", 0) == 1:
                 anomaly_details["anomaly_gap"] = 1
             
             return False, "Data anomaly detected", anomaly_details
