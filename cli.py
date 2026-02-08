@@ -1350,38 +1350,39 @@ def reset_kill_switch():
     try:
 
         from storage.database import Database
+        from risk.kill_switch import KillSwitch
 
         db = Database()
 
-        cursor = db.conn.cursor()
+        # 1. Reset old KillSwitch (errors table) - use the proper reset method
+        logger.info("Resetting KillSwitch (errors table)...")
+        kill_switch = KillSwitch(db)
+        success_old = kill_switch.reset("RESET")
+        
+        if success_old:
+            logger.info("✓ KillSwitch reset successfully")
+        else:
+            logger.warning("✗ KillSwitch reset failed")
 
-        # Delete kill_switch activation error from the last 24 hours
-
-        cursor.execute(
-
-            """
-
-            DELETE FROM errors
-
-            WHERE error_type = 'kill_switch_activated'
-
-            AND timestamp > ?
-
-        """,
-
-            (db.conn.execute("SELECT strftime('%s', 'now', '-1 day')").fetchone()[0],),
-
-        )
-
-        db.conn.commit()
+        # 2. Reset trading_disabled flag (config table)
+        logger.info("Clearing trading_disabled flag...")
+        try:
+            db.save_config("trading_disabled", False)
+            logger.info("✓ trading_disabled flag cleared")
+            success_manager = True
+        except Exception as e:
+            logger.error(f"✗ Failed to clear trading_disabled flag: {e}")
+            success_manager = False
 
         db.close()
 
-        logger.info("✅ Kill switch has been reset!")
-
-        logger.info("You can now start the bot with: python cli.py live")
-
-        return 0
+        if success_old and success_manager:
+            logger.info("✅ Kill switch has been reset completely!")
+            logger.info("You can now start the bot with: python cli.py live")
+            return 0
+        else:
+            logger.warning("⚠️  Kill switch reset completed with errors. Check logs above.")
+            return 1
 
     except Exception as e:
 
