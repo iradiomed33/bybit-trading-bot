@@ -26,6 +26,8 @@ import json
 
 from typing import Optional, Dict, Any
 
+from urllib.parse import urlencode
+
 from logger import setup_logger
 
 from config import Config
@@ -263,6 +265,9 @@ class BybitRestClient:
         url = f"{self.base_url}{endpoint}"
 
         headers = {}
+        
+        # Инициализируем body_string для использования в signed POST
+        body_string = None
 
         # Если требуется подпись (приватные эндпоинты)
 
@@ -278,9 +283,9 @@ class BybitRestClient:
 
             if method.upper() == "GET":
 
-                # GET: сортируем параметры в URL-encoded строку
-
-                query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+                # GET: используем urlencode для корректного экранирования
+                # Сортируем параметры для консистентности
+                query_string = urlencode(sorted(params.items()))
 
                 signature = self.sign_request(
 
@@ -327,6 +332,10 @@ class BybitRestClient:
                 }
 
             )
+            
+            # Для signed POST добавляем Content-Type
+            if signed and method.upper() == "POST":
+                headers["Content-Type"] = "application/json"
 
         # Retry логика
 
@@ -341,8 +350,16 @@ class BybitRestClient:
                     response = self.session.get(url, params=params, headers=headers)
 
                 elif method.upper() == "POST":
-
-                    response = self.session.post(url, json=params, headers=headers)
+                    # Для signed POST отправляем точно ту же строку, что подписали
+                    if signed:
+                        response = self.session.post(
+                            url, 
+                            data=body_string.encode("utf-8"), 
+                            headers=headers
+                        )
+                    else:
+                        # Для unsigned POST можем использовать json=params
+                        response = self.session.post(url, json=params, headers=headers)
 
                 else:
 
