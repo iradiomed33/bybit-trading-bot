@@ -505,6 +505,17 @@ class MetaLayer:
 
         """
 
+        # GUARD: Проверяем наличие symbol в features
+        if not features:
+            features = {}
+        
+        if "symbol" not in features or not features["symbol"]:
+            logger.warning(
+                "⚠️  Symbol missing in features! This should be guaranteed by caller. "
+                "Adding UNKNOWN as fallback."
+            )
+            features["symbol"] = "UNKNOWN"
+
         # 1. No-trade zones
 
         trading_allowed, block_reason = self.no_trade_zones.is_trading_allowed(

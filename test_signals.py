@@ -46,11 +46,15 @@ try:
 
         sys.exit(1)
 
-    logger.info(f"✓ Market data fetched: {len(data['df'])} candles")
+    logger.info(f"✓ Market data fetched: {len(data['d'])} candles")
 
     # Try to get signal
+    
+    # TASK-001: Гарантируем наличие symbol в features
+    orderflow_features = data.get("orderflow_features", {})
+    orderflow_features["symbol"] = bot.symbol
 
-    signal = bot.meta_layer.get_signal(data["d"], data.get("orderflow_features", {}))
+    signal = bot.meta_layer.get_signal(data["d"], orderflow_features)
 
     if signal:
 

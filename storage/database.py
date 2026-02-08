@@ -17,6 +17,14 @@ SQLite база данных для хранения состояния бота
 
 - config_snapshots: История конфигураций
 
+TASK-003 (P0): MultiSymbol безопасность
+
+- WAL mode включен для конкурентного доступа
+
+- busy_timeout = 5 сек для обработки lock'ов
+
+- Глобальный кэш соединений по пути БД
+
 """
 
 
@@ -32,8 +40,15 @@ from pathlib import Path
 
 from logger import setup_logger
 
+import threading
+
 
 logger = setup_logger(__name__)
+
+
+# TASK-003: Глобальный кэш соединений и блокировка для безопасности потоков
+_global_connections: Dict[str, sqlite3.Connection] = {}
+_connections_lock = threading.Lock()
 
 
 class Database:
@@ -57,15 +72,56 @@ class Database:
 
         self.conn: Optional[sqlite3.Connection] = None
 
+        # TASK-003: Используем кэшированное соединение для одного процесса
+        self._ensure_cached_connection()
+        
         self._init_db()
 
         logger.info(f"Database initialized: {db_path}")
 
+
+    @staticmethod
+    def _get_cached_connection(db_path: str) -> sqlite3.Connection:
+        """
+        TASK-003: Получить или создать кэшированное соединение для БД.
+        
+        Гарантирует что один файл БД используется через одно соединение в процессе.
+        Разные файлы БД могут иметь разные соединения.
+        
+        Args:
+            db_path: Путь к файлу БД
+            
+        Returns:
+            sqlite3.Connection (кэшированное)
+        """
+        # Нормализуем путь
+        normalized_path = str(Path(db_path).resolve())
+        
+        with _connections_lock:
+            if normalized_path not in _global_connections:
+                conn = sqlite3.connect(normalized_path, check_same_thread=False, timeout=5.0)
+                # Включаем WAL mode (Write-Ahead Logging) для конкурентного доступа
+                conn.execute("PRAGMA journal_mode=WAL")
+                # Установляем timeout на занятость БД (в секундах)
+                conn.execute("PRAGMA busy_timeout=5000")  # 5 секунд
+                # Итоговое исполнение для убедительности
+                conn.execute("PRAGMA synchronous=NORMAL")  # Балансируем между скоростью и надежностью
+                
+                _global_connections[normalized_path] = conn
+                logger.debug(f"✓ Created cached connection for {normalized_path} (WAL + busy_timeout=5s)")
+            
+            return _global_connections[normalized_path]
+
+    def _ensure_cached_connection(self):
+        """TASK-003: Убедиться что используется кэшированное соединение"""
+        self.conn = self._get_cached_connection(self.db_path)
+
     def _init_db(self):
         """Инициализация базы данных и создание таблиц"""
 
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-
+        # TASK-003: Используем уже кэшированное соединение (не переподключаемся)
+        # self.conn уже установлено в _ensure_cached_connection()
+        
         self.conn.row_factory = sqlite3.Row  # Доступ к колонкам по имени
 
         cursor = self.conn.cursor()
@@ -953,10 +1009,34 @@ class Database:
         return exec_id
 
     def close(self):
-        """Закрыть соединение с БД"""
+        """
+        TASK-003: Закрыть данный экземпляр Database.
+        
+        Примечание: Кэшированное соединение остается активным для других 
+        экземпляров Database с тем же db_path. Используйте close_all_cached() 
+        чтобы полностью закрыть все кэшированные соединения.
+        """
+        logger.info(f"Database instance closed (cached connection remains active)")
 
-        if self.conn:
+    @staticmethod
+    def close_all_cached():
+        """
+        TASK-003: Закрыть все кэшированные соединения.
+        
+        Используется в тестах для очистки состояния между тестами.
+        """
+        with _connections_lock:
+            for db_path, conn in _global_connections.items():
+                try:
+                    conn.close()
+                    logger.debug(f"✓ Closed cached connection for {db_path}")
+                except Exception as e:
+                    logger.warning(f"Error closing cached connection for {db_path}: {e}")
+            _global_connections.clear()
+            logger.info("All cached connections closed")
 
-            self.conn.close()
-
-            logger.info("Database connection closed")
+    @staticmethod
+    def get_cached_connection_count() -> int:
+        """TASK-003: Получить количество кэшированных соединений (для мониторинга)"""
+        with _connections_lock:
+            return len(_global_connections)

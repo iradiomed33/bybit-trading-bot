@@ -17,6 +17,9 @@ from typing import Dict, Any, List, Tuple
 # Логирование
 from logger import setup_logger
 
+# Config
+from config.settings import ConfigManager
+
 logger = setup_logger()
 
 
@@ -103,7 +106,7 @@ def test_smk_02_market_data() -> Tuple[bool, str]:
         from exchange.market_data import MarketDataClient
         from config import Config
 
-        client = MarketDataClient(testnet=(Config.ENVIRONMENT == "testnet"))
+        client = MarketDataClient(testnet=ConfigManager().is_testnet())
 
         # Загрузить OHLCV данные
         symbol = "BTCUSDT"
@@ -150,7 +153,7 @@ def test_smk_03_feature_pipeline() -> Tuple[bool, str]:
         import numpy as np
 
         # Загрузить данные
-        client = MarketDataClient(testnet=(Config.ENVIRONMENT == "testnet"))
+        client = MarketDataClient(testnet=ConfigManager().is_testnet())
 
         symbol = "BTCUSDT"
         timeframe = "15"  # Bybit формат (числовой)
@@ -222,7 +225,7 @@ def test_smk_04_paper_mode() -> Tuple[bool, str]:
             mode="paper",
             strategies=[],  # Пустой список для базовой проверки инициализации
             symbol="BTCUSDT",
-            testnet=(Config.ENVIRONMENT == "testnet")
+            testnet=ConfigManager().is_testnet()
         )
         
         logger.debug(f"  TradingBot инициализирован в режиме: {bot.mode}")
@@ -258,7 +261,7 @@ def test_smk_05_testnet_api() -> Tuple[bool, str]:
         client = AccountClient(
             api_key=api_key,
             api_secret=api_secret,
-            testnet=(Config.ENVIRONMENT == "testnet")
+            testnet=ConfigManager().is_testnet()
         )
 
         # Попытка получить позиции (приватный запрос)
@@ -295,7 +298,7 @@ def test_smk_06_kill_switch() -> Tuple[bool, str]:
         client = BybitRestClient(
             api_key=Config.BYBIT_API_KEY or "",
             api_secret=Config.BYBIT_API_SECRET or "",
-            testnet=(Config.ENVIRONMENT == "testnet")
+            testnet=ConfigManager().is_testnet()
         )
 
         # Инициализировать kill switch

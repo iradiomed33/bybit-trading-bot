@@ -66,9 +66,6 @@ signal_logger = get_signal_logger()
 bot_instance = None
 bot_thread = None
 
-# Log queue for WebSocket broadcasting
-log_queue = []
-
 
 # ============================================================================
 # WebSocket Log Handler
@@ -80,16 +77,13 @@ class WebSocketLogHandler(logging.Handler):
     def emit(self, record):
         try:
             log_entry = self.format(record)
-            # Add to queue instead of trying to create task
-            log_queue.append({
+            # Broadcast to all connected WebSocket clients
+            asyncio.create_task(broadcast_to_clients({
                 "type": "log",
                 "level": record.levelname,
                 "message": log_entry,
                 "timestamp": datetime.now().isoformat()
-            })
-            # Keep queue size reasonable
-            if len(log_queue) > 1000:
-                log_queue.pop(0)
+            }))
         except Exception:
             self.handleError(record)
 

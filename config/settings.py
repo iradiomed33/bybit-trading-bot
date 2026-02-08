@@ -486,6 +486,48 @@ class ConfigManager:
 
         return copy.deepcopy(self.config)
 
+    def is_testnet(self) -> bool:
+        """
+        Единый источник истины: определить используется ли testnet или mainnet.
+        
+        Приоритет (от выше к ниже):
+        1. Переменная окружения ENVIRONMENT (из config.Config)
+        2. JSON конфиг trading.testnet
+        3. Дефолт: True (testnet)
+        
+        Returns:
+            True если testnet, False если mainnet
+        """
+        # Приоритет 1: проверяем ENVIRONMENT из переменных окружения
+        try:
+            from config import Config
+            if hasattr(Config, 'ENVIRONMENT'):
+                if Config.ENVIRONMENT == "testnet":
+                    logger.debug("[Environment] Using testnet (from ENVIRONMENT env var)")
+                    return True
+                elif Config.ENVIRONMENT == "mainnet":
+                    logger.debug("[Environment] Using mainnet (from ENVIRONMENT env var)")
+                    return False
+        except Exception as e:
+            logger.debug(f"[Environment] Could not read Config.ENVIRONMENT: {e}")
+        
+        # Приоритет 2: проверяем JSON конфиг
+        json_testnet = self.get("trading.testnet", True)
+        if json_testnet:
+            logger.debug("[Environment] Using testnet (from config/bot_settings.json)")
+        else:
+            logger.debug("[Environment] Using mainnet (from config/bot_settings.json)")
+        return json_testnet
+
+    def get_environment(self) -> str:
+        """
+        Получить название окружения в виде строки.
+        
+        Returns:
+            "testnet" если testnet, "mainnet" если mainnet
+        """
+        return "testnet" if self.is_testnet() else "mainnet"
+
     def validate(self) -> tuple[bool, List[str]]:
         """
 

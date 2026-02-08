@@ -64,7 +64,11 @@ def test_trading_bot_logic():
 
             logger.info("\n3. Testing signal generation...")
 
-            signal = bot.meta_layer.get_signal(data["d"], data.get("orderflow_features", {}))
+            # TASK-001: Гарантируем наличие symbol в features
+            orderflow_features = data.get("orderflow_features", {})
+            orderflow_features["symbol"] = bot.symbol
+
+            signal = bot.meta_layer.get_signal(data["d"], orderflow_features)
 
             if signal:
 

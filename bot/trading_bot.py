@@ -74,6 +74,8 @@ from logger import setup_logger
 
 from signal_logger import get_signal_logger
 
+from config.settings import ConfigManager
+
 
 logger = setup_logger(__name__)
 
@@ -96,6 +98,8 @@ class TradingBot:
 
         testnet: bool = True,
 
+        config: Optional[ConfigManager] = None,
+
     ):
         """
 
@@ -109,6 +113,8 @@ class TradingBot:
 
             testnet: Использовать testnet
 
+            config: ConfigManager для параметров из JSON (опционально)
+
         """
 
         self.mode = mode
@@ -118,6 +124,12 @@ class TradingBot:
         self.testnet = testnet
 
         self.is_running = False
+
+        # Инициализируем конфиг (используем переданный или создаём новый)
+
+        self.config = config or ConfigManager()
+
+        logger.info(f"[TradingBot Risk Config] Loading risk parameters from config")
 
         # Инициализация компонентов
 
@@ -185,29 +197,29 @@ class TradingBot:
 
         if mode == "live":
 
-            # Конфигурируем SL/TP на основе волатильности
+            # Конфигурируем SL/TP на основе волатильности - ПАРАМЕТРЫ ИЗ КОНФИГА
 
             sl_tp_config = StopLossTPConfig(
 
-                sl_atr_multiplier=1.5,  # SL = entry ± 1.5*ATR
+                sl_atr_multiplier=self.config.get("stop_loss_tp.sl_atr_multiplier", 1.5),
 
-                tp_atr_multiplier=2.0,  # TP = entry ± 2.0*ATR
+                tp_atr_multiplier=self.config.get("stop_loss_tp.tp_atr_multiplier", 2.0),
 
-                sl_percent_fallback=1.0,  # Если ATR нет, используем 1% от цены
+                sl_percent_fallback=self.config.get("stop_loss_tp.sl_percent_fallback", 1.0),
 
-                tp_percent_fallback=2.0,  # Если ATR нет, используем 2% от цены
+                tp_percent_fallback=self.config.get("stop_loss_tp.tp_percent_fallback", 2.0),
 
-                use_exchange_sl_tp=True,  # Попытаться использовать биржевые SL/TP
+                use_exchange_sl_tp=self.config.get("stop_loss_tp.use_exchange_sl_tp", True),
 
-                use_virtual_levels=True,  # Fallback на виртуальное отслеживание
+                use_virtual_levels=self.config.get("stop_loss_tp.use_virtual_levels", True),
 
-                enable_trailing_stop=True,  # Включить trailing stop
+                enable_trailing_stop=self.config.get("stop_loss_tp.enable_trailing_stop", True),
 
             )
 
             self.sl_tp_manager = StopLossTakeProfitManager(self.order_manager, sl_tp_config)
 
-            logger.info("SL/TP manager initialized with ATR-based levels")
+            logger.info(f"SL/TP manager initialized: sl_atr={sl_tp_config.sl_atr_multiplier}, tp_atr={sl_tp_config.tp_atr_multiplier}")
 
         else:
 
@@ -237,13 +249,13 @@ class TradingBot:
         # ВАЖНО: Создаем ДО RiskMonitorService, т.к. он использует этот компонент
         if mode == "live":
             risk_config = RiskLimitsConfig(
-                max_leverage=Decimal("10"),
-                max_notional=Decimal("50000"),
-                daily_loss_limit_percent=Decimal("5"),
-                max_drawdown_percent=Decimal("10"),
+                max_leverage=Decimal(str(self.config.get("risk_management.max_leverage", 10))),
+                max_notional=Decimal(str(self.config.get("risk_management.max_notional", 50000))),
+                daily_loss_limit_percent=Decimal(str(self.config.get("risk_management.daily_loss_limit_percent", 5))),
+                max_drawdown_percent=Decimal(str(self.config.get("risk_management.max_drawdown_percent", 10))),
             )
             self.advanced_risk_limits = AdvancedRiskLimits(self.db, risk_config)
-            logger.info("Advanced risk limits initialized (leverage/notional/daily_loss/drawdown)")
+            logger.info(f"[Advanced Risk Limits] max_leverage={risk_config.max_leverage}, max_notional={risk_config.max_notional}, daily_loss={risk_config.daily_loss_limit_percent}%")
         else:
             self.advanced_risk_limits = None
 
@@ -265,12 +277,12 @@ class TradingBot:
         # Risk Monitor Service (для реал-тайм мониторинга рисков по данным биржи)
         if mode == "live":
             risk_monitor_config = RiskMonitorConfig(
-                max_daily_loss_percent=5.0,  # 5% от equity
-                max_position_notional=50000.0,  # $50k max
-                max_leverage=10.0,  # 10x max
-                max_orders_per_symbol=10,  # 10 ордеров max
-                monitor_interval_seconds=30,  # Проверка каждые 30 секунд
-                enable_auto_kill_switch=True,  # Авто kill-switch при критических нарушениях
+                max_daily_loss_percent=self.config.get("risk_monitor.max_daily_loss_percent", 5.0),
+                max_position_notional=self.config.get("risk_monitor.max_position_notional", 50000.0),
+                max_leverage=self.config.get("risk_monitor.max_leverage", 10.0),
+                max_orders_per_symbol=self.config.get("risk_monitor.max_orders_per_symbol", 10),
+                monitor_interval_seconds=self.config.get("risk_monitor.monitor_interval_seconds", 30),
+                enable_auto_kill_switch=self.config.get("risk_monitor.enable_auto_kill_switch", True),
             )
             
             self.risk_monitor = RiskMonitorService(
@@ -281,7 +293,7 @@ class TradingBot:
                 symbol=symbol,
                 config=risk_monitor_config,
             )
-            logger.info("Risk monitor service initialized")
+            logger.info(f"[Risk Monitor] max_daily_loss={risk_monitor_config.max_daily_loss_percent}%, max_leverage={risk_monitor_config.max_leverage}, interval={risk_monitor_config.monitor_interval_seconds}s")
         else:
             self.risk_monitor = None
 
@@ -337,17 +349,17 @@ class TradingBot:
 
             volatility_config = VolatilityPositionSizerConfig(
 
-                risk_percent=Decimal("1.0"),  # 1% risk per trade
+                risk_percent=Decimal(str(self.config.get("risk_management.position_risk_percent", 1.0) / 100)),
 
-                atr_multiplier=Decimal("2.0"),  # 2x ATR for SL distance
+                atr_multiplier=Decimal(str(self.config.get("risk_management.atr_multiplier", 2.0))),
 
-                min_position_size=Decimal("0.00001"),
+                min_position_size=Decimal(str(self.config.get("risk_management.min_position_size", 0.00001))),
 
-                max_position_size=Decimal("100.0"),
+                max_position_size=Decimal(str(self.config.get("risk_management.max_position_size", 100.0))),
 
                 use_percent_fallback=True,
 
-                percent_fallback=Decimal("5.0"),
+                percent_fallback=Decimal(str(self.config.get("risk_management.percent_fallback", 5.0))),
 
             )
 
@@ -356,7 +368,7 @@ class TradingBot:
                 instruments_manager=self.instruments_manager,
             )
 
-            logger.info("Volatility position sizer initialized (D3)")
+            logger.info(f"[Volatility Sizer] risk_percent={volatility_config.risk_percent}, atr_multiplier={volatility_config.atr_multiplier}")
 
         else:
 
@@ -378,17 +390,17 @@ class TradingBot:
 
             paper_config = PaperTradingConfig(
 
-                initial_balance=Decimal("10000"),
+                initial_balance=Decimal(str(self.config.get("paper_trading.initial_balance", 10000))),
 
-                maker_commission=Decimal("0.0002"),
+                maker_commission=Decimal(str(self.config.get("paper_trading.maker_commission", 0.0002))),
 
-                taker_commission=Decimal("0.0004"),
+                taker_commission=Decimal(str(self.config.get("paper_trading.taker_commission", 0.0004))),
 
-                slippage_buy=Decimal("0.0001"),
+                slippage_buy=Decimal(str(self.config.get("paper_trading.slippage_buy", 0.0001))),
 
-                slippage_sell=Decimal("0.0001"),
+                slippage_sell=Decimal(str(self.config.get("paper_trading.slippage_sell", 0.0001))),
 
-                use_random_slippage=False,
+                use_random_slippage=self.config.get("paper_trading.use_random_slippage", False),
 
                 seed=None,  # Для воспроизводимости установить seed
 
@@ -398,11 +410,7 @@ class TradingBot:
 
             self.equity_curve = EquityCurve()
 
-            logger.info(
-
-                f"Paper Trading Simulator initialized with balance ${float(paper_config.initial_balance):.2f}"
-
-            )
+            logger.info(f"[Paper Trading] initial_balance=${float(paper_config.initial_balance):.2f}, maker_fee={float(paper_config.maker_commission)*100:.03f}%")
 
         logger.info("TradingBot initialized successfully")
 
@@ -477,6 +485,30 @@ class TradingBot:
                 )
 
                 features = data.get("orderflow_features", {})
+                
+                # TASK-001: Гарантируем наличие symbol в features
+                features["symbol"] = self.symbol
+                
+                # TASK-002: Гарантируем наличие orderflow features в features
+                # Orderflow features (spread_percent, depth_imbalance, etc.) вычисляются в build_features()
+                # и добавляются в df_with_features, но могут быть потеряны если orderbook_resp был недоступен.
+                # Извлекаем их из последней строки df для гарантии наличия.
+                import pandas as pd
+                latest_row = df_with_features.iloc[-1]
+                for key in ["spread_percent", "depth_imbalance", "liquidity_concentration", "midprice"]:
+                    if key not in features or features.get(key) is None:
+                        if key in latest_row.index and pd.notna(latest_row[key]):
+                            features[key] = float(latest_row[key])
+                        else:
+                            # Fallback значения если нет в df
+                            if key == "spread_percent":
+                                features[key] = 0.01  # Оптимистичное значение по умолчанию
+                            elif key == "depth_imbalance":
+                                features[key] = 0.0
+                            elif key == "liquidity_concentration":
+                                features[key] = 0.5
+                            elif key == "midprice":
+                                features[key] = float(latest_row.get("close", 0))
 
                 # 3. Проверяем circuit breaker
 

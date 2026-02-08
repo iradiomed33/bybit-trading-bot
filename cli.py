@@ -192,7 +192,9 @@ def market_data_test():
 
         # Используем testnet из конфига
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        from config.settings import ConfigManager
+
+        testnet = ConfigManager().is_testnet()
 
         client = MarketDataClient(testnet=testnet)
 
@@ -306,7 +308,9 @@ def stream_test():
 
     logger.info("Press Ctrl+C to stop")
 
-    testnet = Config.ENVIRONMENT == "testnet"
+    from config.settings import ConfigManager
+
+    testnet = ConfigManager().is_testnet()
 
     symbol = "BTCUSDT"
 
@@ -438,7 +442,9 @@ def state_recovery_test():
 
         # Инициализация
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        from config.settings import ConfigManager
+
+        testnet = ConfigManager().is_testnet()
 
         db = Database()
 
@@ -500,7 +506,9 @@ def features_test():
 
         import pandas as pd
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        from config.settings import ConfigManager
+
+        testnet = ConfigManager().is_testnet()
 
         market_client = MarketDataClient(testnet=testnet)
 
@@ -790,7 +798,9 @@ def execution_test():
 
         from execution import OrderManager, PositionManager
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        from config.settings import ConfigManager
+
+        testnet = ConfigManager().is_testnet()
 
         client = BybitRestClient(testnet=testnet)
 
@@ -953,7 +963,9 @@ def strategy_test():
 
         import pandas as pd
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        from config.settings import ConfigManager
+
+        testnet = ConfigManager().is_testnet()
 
         market_client = MarketDataClient(testnet=testnet)
 
@@ -1035,6 +1047,11 @@ def strategy_test():
 
         logger.info("\n[3] Generating signal...")
 
+        # TASK-001: Гарантируем наличие symbol в features
+        if not features:
+            features = {}
+        features["symbol"] = symbol
+
         signal = meta.get_signal(df_with_features, features, error_count=0)
 
         if signal:
@@ -1083,19 +1100,21 @@ def backtest_command():
 
         from data.features import FeaturePipeline
 
-        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
-
         from strategy.meta_layer import MetaLayer
 
         from backtest import BacktestEngine
 
         from storage.database import Database
 
+        from config.settings import ConfigManager
+
+        from bot.strategy_builder import StrategyBuilder
+
         import pandas as pd
 
         # Получаем данные
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        testnet = config.is_testnet()
 
         market_client = MarketDataClient(testnet=testnet)
 
@@ -1131,17 +1150,15 @@ def backtest_command():
 
         df_with_features = pipeline.build_features(df)
 
-        # Стратегии
+        # Стратегии - из конфига!
 
-        strategies = [
+        config = ConfigManager()
 
-            TrendPullbackStrategy(),
+        builder = StrategyBuilder(config)
 
-            BreakoutStrategy(),
+        strategies = builder.build_strategies()
 
-            MeanReversionStrategy(),
-
-        ]
+        logger.info(f"[Backtest] Created {len(strategies)} strategies from config")
 
         meta = MetaLayer(strategies)
 
@@ -1175,7 +1192,8 @@ def backtest_command():
 
             if not engine.current_position:
 
-                signal = meta.get_signal(current_df, {}, error_count=0)
+                # TASK-001: Гарантируем наличие symbol в features
+                signal = meta.get_signal(current_df, {"symbol": symbol}, error_count=0)
 
                 if signal:
 
@@ -1255,23 +1273,27 @@ def paper_command():
 
     try:
 
-        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
-
         from bot import TradingBot
 
-        strategies = [
+        from config.settings import ConfigManager
 
-            TrendPullbackStrategy(),
+        from bot.strategy_builder import StrategyBuilder
 
-            BreakoutStrategy(),
+        # Загружаем конфиг и создаём стратегии из него
 
-            MeanReversionStrategy(),
+        config = ConfigManager()
 
-        ]
+        builder = StrategyBuilder(config)
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        strategies = builder.build_strategies()
 
-        bot = TradingBot(mode="paper", strategies=strategies, testnet=testnet)
+        logger.info(f"[Paper Trading] Created {len(strategies)} strategies from config")
+
+        testnet = config.is_testnet()
+
+        # Передаём конфиг в TradingBot для прокидывания параметров риска
+
+        bot = TradingBot(mode="paper", strategies=strategies, testnet=testnet, config=config)
 
         bot.run()
 
@@ -1301,23 +1323,27 @@ def live_command():
 
     try:
 
-        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
-
         from bot import TradingBot
 
-        strategies = [
+        from config.settings import ConfigManager
 
-            TrendPullbackStrategy(),
+        from bot.strategy_builder import StrategyBuilder
 
-            BreakoutStrategy(),
+        # Загружаем конфиг и создаём стратегии из него
 
-            MeanReversionStrategy(),
+        config = ConfigManager()
 
-        ]
+        builder = StrategyBuilder(config)
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        strategies = builder.build_strategies()
 
-        bot = TradingBot(mode="live", strategies=strategies, testnet=testnet)
+        logger.info(f"[Live Trading] Created {len(strategies)} strategies from config")
+
+        testnet = config.is_testnet()
+
+        # Передаём конфиг в TradingBot для прокидывания параметров риска
+
+        bot = TradingBot(mode="live", strategies=strategies, testnet=testnet, config=config)
 
         bot.run()
 
@@ -1421,7 +1447,9 @@ def kill_command():
 
         from config import Config
 
-        testnet = Config.ENVIRONMENT == "testnet"
+        from config.settings import ConfigManager
+
+        testnet = ConfigManager().is_testnet()
 
         client = BybitRestClient(testnet=testnet)
 

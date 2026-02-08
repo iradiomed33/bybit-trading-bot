@@ -1,6 +1,6 @@
 {
   "trading": {
-    "symbol": "BTCUSDT",
+    "symbol": "BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT",
     "symbols": [
       "BTCUSDT",
       "ETHUSDT",
@@ -28,11 +28,44 @@
     }
   },
   "risk_management": {
-    "position_risk_percent": 10,
+    "position_risk_percent": 5,
     "max_leverage": 10,
-    "max_position_size": 0.5,
+    "max_position_size": 100.0,
+    "max_notional": 50000.0,
     "stop_loss_percent": 5,
-    "take_profit_percent": 10
+    "take_profit_percent": 10,
+    "daily_loss_limit_percent": 5.0,
+    "max_drawdown_percent": 10.0,
+    "max_position_notional": 50000.0,
+    "max_orders_per_symbol": 10,
+    "atr_multiplier": 2.0,
+    "min_position_size": 1e-05,
+    "percent_fallback": 5.0
+  },
+  "stop_loss_tp": {
+    "sl_atr_multiplier": 1.5,
+    "tp_atr_multiplier": 2.0,
+    "sl_percent_fallback": 1.0,
+    "tp_percent_fallback": 2.0,
+    "use_exchange_sl_tp": true,
+    "use_virtual_levels": true,
+    "enable_trailing_stop": true
+  },
+  "risk_monitor": {
+    "max_daily_loss_percent": 5.0,
+    "max_position_notional": 50000.0,
+    "max_leverage": 10.0,
+    "max_orders_per_symbol": 10,
+    "monitor_interval_seconds": 30,
+    "enable_auto_kill_switch": true
+  },
+  "paper_trading": {
+    "initial_balance": 10000,
+    "maker_commission": 0.0002,
+    "taker_commission": 0.0004,
+    "slippage_buy": 0.0001,
+    "slippage_sell": 0.0001,
+    "use_random_slippage": false
   },
   "strategies": {
     "TrendPullback": {
