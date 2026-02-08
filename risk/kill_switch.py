@@ -104,13 +104,14 @@ class KillSwitch:
         cursor.execute(
             """
             SELECT MAX(CAST(timestamp AS REAL)) FROM errors
-            WHERE error_type = 'kill_switch_reset'
-        """
+            WHERE error_type = 'kill_switch_reset' AND CAST(timestamp AS REAL) > ?
+        """,
+            (threshold,),
         )
         last_reset = cursor.fetchone()[0]
 
         # Если активаций нет или они старше последнего сброса — считаем выключенным
-        if not last_activation or (last_reset and last_reset >= last_activation):
+        if not last_activation or (last_reset and last_reset > last_activation):
             self.is_activated = False
             return False
 
