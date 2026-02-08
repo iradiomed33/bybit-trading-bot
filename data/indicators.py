@@ -307,7 +307,7 @@ class TechnicalIndicators:
 
             vwap = (typical_price * df["volume"]).rolling(window=20).sum() / df["volume"].rolling(
 
-                _window=20
+                window=20
 
             ).sum()
 

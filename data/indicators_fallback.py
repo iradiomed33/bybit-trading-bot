@@ -251,7 +251,7 @@ class TechnicalIndicators:
 
         df["volume_zscore"] = (df["volume"] - df["volume_sma"]) / df["volume"].rolling(
 
-            _window=period
+            window=period
 
         ).std()
 
