@@ -931,6 +931,56 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
 # ============================================================================
 
+# HELPERS FOR BYBIT ACCOUNT DATA
+
+# ============================================================================
+
+_account_client_cache = {
+    "api_key": None,
+    "api_secret": None,
+    "testnet": None,
+    "client": None,
+}
+
+def _get_account_client():
+    """Cached AccountClient if BYBIT keys exist; otherwise None."""
+    api_key = os.getenv("BYBIT_API_KEY", "") or getattr(Config, "BYBIT_API_KEY", "")
+    api_secret = os.getenv("BYBIT_API_SECRET", "") or getattr(Config, "BYBIT_API_SECRET", "")
+    if not api_key or not api_secret:
+        return None
+
+    cfg = get_config()
+    testnet = bool(cfg.get("trading.testnet", True))
+
+    cached = _account_client_cache
+    if (
+        cached.get("client") is not None
+        and cached.get("api_key") == api_key
+        and cached.get("api_secret") == api_secret
+        and cached.get("testnet") == testnet
+    ):
+        return cached["client"]
+
+    client = AccountClient(api_key=api_key, api_secret=api_secret, testnet=testnet)
+    _account_client_cache.update(
+        {"api_key": api_key, "api_secret": api_secret, "testnet": testnet, "client": client}
+    )
+    return client
+
+def _extract_usdt_coin_info(wallet_balance_response: dict) -> dict:
+    """Best-effort parse of /v5/account/wallet-balance for USDT coin."""
+    if wallet_balance_response.get("retCode") != 0:
+        return {}
+    accounts = wallet_balance_response.get("result", {}).get("list", [])
+    for account in accounts:
+        for coin in account.get("coin", []) or []:
+            if coin.get("coin") == "USDT":
+                return coin
+    return {}
+
+
+# ============================================================================
+
 # ACCOUNT ENDPOINTS
 
 # ============================================================================
@@ -938,275 +988,184 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
 @app.get("/api/account/balance")
 async def get_balance():
-    """Получить баланс аккаунта
+    """Получить баланс аккаунта - реальный с Bybit или локальный fallback"""
     
-    В paper режиме: демо-баланс 10000 USDT (simulated)
-    В live режиме: реальные данные с Bybit API
-    """
+    client = _get_account_client()
+    if client is not None:
+        try:
+            wb = client.client.get(
+                "/v5/account/wallet-balance",
+                params={"accountType": "UNIFIED"},
+                signed=True,
+            )
+            usdt = _extract_usdt_coin_info(wb)
+            if not usdt:
+                raise Exception(f"USDT coin not found in wallet balance: {wb}")
 
+            # position_value ≈ Σ |size| * markPrice
+            pos_resp = client.get_positions(category="linear", symbol=None)
+            pos_list = pos_resp.get("result", {}).get("list", []) if pos_resp.get("retCode") == 0 else []
+            position_value = 0.0
+            for p in pos_list:
+                try:
+                    size = abs(float(p.get("size", 0) or 0))
+                    if size <= 0:
+                        continue
+                    mark = float(p.get("markPrice", 0) or 0)
+                    position_value += size * mark
+                except Exception:
+                    continue
+
+            total_balance = float(usdt.get("equity") or usdt.get("walletBalance") or 0)
+            available_balance = float(
+                usdt.get("availableToWithdraw")
+                or usdt.get("availableBalance")
+                or usdt.get("availableToBorrow")
+                or 0
+            )
+            unrealized_pnl = float(usdt.get("unrealisedPnl") or 0)
+            realized_pnl = float(usdt.get("cumRealisedPnl") or 0)
+            margin_balance = float(usdt.get("marginBalance") or usdt.get("equity") or total_balance)
+
+            logger.info(f"[get_balance] Bybit: balance={total_balance}, pnl={unrealized_pnl}")
+            return {
+                "status": "success",
+                "data": {
+                    "total_balance": total_balance,
+                    "available_balance": max(available_balance, 0.0),
+                    "position_value": position_value,
+                    "unrealized_pnl": unrealized_pnl,
+                    "realized_pnl": realized_pnl,
+                    "currency": "USDT",
+                    "margin_balance": margin_balance,
+                    "source": "bybit",
+                },
+            }
+        except Exception as e:
+            logger.error(f"Failed to get balance from exchange: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail=f"Failed to fetch Bybit balance: {e}")
+
+    # fallback (если ключей нет)
     try:
-        config = ConfigManager()
-        mode = config.get("trading.mode", "paper")
-        
-        # Для live режима получать данные с Bybit
-        if mode == "live":
-            try:
-                api_key = Config.BYBIT_API_KEY or ""
-                api_secret = Config.BYBIT_API_SECRET or ""
-                
-                if not api_key or not api_secret:
-                    return {
-                        "status": "error",
-                        "error": "API keys not configured (BYBIT_API_KEY, BYBIT_API_SECRET)",
-                        "data": None
-                    } 
-                
-                client = AccountClient(
-                    api_key=api_key,
-                    api_secret=api_secret,
-                    testnet=ConfigManager().is_testnet()
-                )
-                
-                wallet = client.get_wallet_balance(coin="USDT")
-                
-                if wallet.get("retCode") != 0:
-                    logger.warning(f"Bybit API returned error: {wallet.get('retMsg')}")
-                    return {
-                        "status": "error",
-                        "error": wallet.get("retMsg", "Failed to get wallet balance"),
-                        "data": None
-                    }
-                
-                # Parse Bybit response
-                accounts = wallet.get("result", {}).get("list", [])
-                if not accounts:
-                    return {
-                        "status": "error",
-                        "error": "No account data returned from Bybit",
-                        "data": None
-                    }
-                
-                account = accounts[0]
-                total_balance_usdt = 0
-                for coin_info in account.get("coin", []):
-                    if coin_info.get("coin") == "USDT":
-                        total_balance_usdt = float(coin_info.get("walletBalance", 0))
-                        available_balance = float(coin_info.get("availableToWithdraw", 0))
-                        break
-                
-                # Get positions for unrealized PnL
-                positions_data = client.get_positions(category="linear")
-                total_unrealized_pnl = 0
-                position_value = 0
-                
-                if positions_data.get("retCode") == 0:
-                    positions_list = positions_data.get("result", {}).get("list", [])
-                    for pos in positions_list:
-                        if float(pos.get("size", 0)) > 0:
-                            total_unrealized_pnl += float(pos.get("unrealizedPnl", 0))
-                            position_value += float(pos.get("positionValue", 0))
-                
-                return {
-                    "status": "success",
-                    "source": "bybit_live",
-                    "data": {
-                        "total_balance": total_balance_usdt,
-                        "available_balance": available_balance,
-                        "position_value": position_value,
-                        "unrealized_pnl": total_unrealized_pnl,
-                        "realized_pnl": 0.0,  # TODO: compute from positions history
-                        "currency": "USDT",
-                        "margin_balance": position_value,
-                    },
-                }
-            except Exception as e:
-                logger.error(f"Failed to get balance from Bybit: {e}")
-                return {
-                    "status": "error",
-                    "error": f"Failed to connect to Bybit: {str(e)}",
-                    "data": None
-                }
-        
-        # Paper режим - демо-баланс
         db = Database()
         cursor = db.conn.cursor()
-        
         cursor.execute(
             """
             SELECT SUM(size) as total_size, SUM(unrealised_pnl) as total_pnl
             FROM positions
             WHERE size > 0
-        """
+            """
         )
-        
         pos_data = cursor.fetchone()
         total_size = pos_data[0] or 0.0
         total_pnl = pos_data[1] or 0.0
         db.close()
-        
-        # Demo balance для paper режима
+
         total_balance = 10000.0
-        position_value = total_size * 45000 if total_size > 0 else 0.0
+        position_value = float(total_size or 0.0) * 45000 if (total_size or 0) > 0 else 0.0
         available_balance = total_balance - position_value
-        
+
+        logger.info(f"[get_balance] Local fallback: balance={total_balance}, pnl={total_pnl}")
         return {
             "status": "success",
-            "source": "simulated",
             "data": {
                 "total_balance": total_balance,
-                "available_balance": max(available_balance, 0),
+                "available_balance": max(available_balance, 0.0),
                 "position_value": position_value,
-                "unrealized_pnl": total_pnl,
+                "unrealized_pnl": float(total_pnl or 0.0),
                 "realized_pnl": 0.0,
                 "currency": "USDT",
                 "margin_balance": position_value,
+                "source": "local",
             },
         }
-
     except Exception as e:
-        logger.error(f"Failed to get balance: {e}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "data": None
-        }
+        logger.error(f"Failed to get local balance: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/account/positions")
 async def get_positions():
-    """Получить открытые позиции
-    
-    JSON schema: symbol, side, size, entry_price, mark_price, pnl, pnl_pct
-    
-    В paper режиме: из SQLite (simulated)
-    В live режиме: с Bybit API (real)
-    """
+    """Получить открытые позиции - реальные с Bybit или локальные"""
 
-    try:
-        config = ConfigManager()
-        mode = config.get("trading.mode", "paper")
-        
-        # Для live режима получать с Bybit
-        if mode == "live":
-            try:
-                api_key = Config.BYBIT_API_KEY or ""
-                api_secret = Config.BYBIT_API_SECRET or ""
-                
-                if not api_key or not api_secret:
-                    return {
-                        "status": "error",
-                        "error": "API keys not configured",
-                        "data": []
-                    }
-                
-                client = AccountClient(
-                    api_key=api_key,
-                    api_secret=api_secret,
-                    testnet=ConfigManager().is_testnet()
-                )
-                
-                positions_data = client.get_positions(category="linear")
-                
-                if positions_data.get("retCode") != 0:
-                    logger.warning(f"Bybit API error: {positions_data.get('retMsg')}")
-                    return {
-                        "status": "error",
-                        "error": positions_data.get("retMsg", "Failed to get positions"),
-                        "data": []
-                    }
-                
-                positions = []
-                for pos in positions_data.get("result", {}).get("list", []):
-                    size = float(pos.get("size", 0))
-                    
-                    # Skip closed positions
-                    if size == 0:
+    client = _get_account_client()
+    if client is not None:
+        try:
+            resp = client.get_positions(category="linear", symbol=None)
+            if resp.get("retCode") != 0:
+                raise Exception(resp)
+
+            raw_positions = resp.get("result", {}).get("list", []) or []
+            positions = []
+            for p in raw_positions:
+                try:
+                    size = float(p.get("size", 0) or 0)
+                    if abs(size) <= 0:
                         continue
-                    
-                    entry_price = float(pos.get("avgPrice", 0))
-                    mark_price = float(pos.get("markPrice", 0))
-                    unrealized_pnl = float(pos.get("unrealizedPnl", 0))
-                    
-                    # Calculate PnL percentage
-                    pnl_pct = 0.0
-                    if entry_price > 0:
-                        pnl_pct = (unrealized_pnl / (entry_price * size)) * 100 if (entry_price * size) != 0 else 0
-                    
-                    positions.append({
-                        "symbol": pos.get("symbol", ""),
-                        "side": pos.get("side", "").upper(),
-                        "size": size,
-                        "entry_price": entry_price,
-                        "mark_price": mark_price,
-                        "pnl": unrealized_pnl,
-                        "pnl_pct": round(pnl_pct, 2),
-                    })
-                
-                return {
-                    "status": "success",
-                    "source": "bybit_live",
-                    "data": positions,
-                }
-            except Exception as e:
-                logger.error(f"Failed to get positions from Bybit: {e}")
-                return {
-                    "status": "error",
-                    "error": str(e),
-                    "data": []
-                }
-        
-        # Paper режим - из SQLite
+                    entry_price = float(p.get("avgPrice") or p.get("entryPrice") or 0)
+                    mark_price = float(p.get("markPrice") or 0)
+                    pnl = float(p.get("unrealisedPnl") or 0)
+                    denom = abs(size) * entry_price
+                    pnl_pct = (pnl / denom * 100.0) if denom > 0 else 0.0
+
+                    positions.append(
+                        {
+                            "symbol": p.get("symbol"),
+                            "side": p.get("side"),
+                            "size": size,
+                            "entry_price": entry_price,
+                            "mark_price": mark_price,
+                            "pnl": pnl,
+                            "pnl_pct": pnl_pct,
+                            "source": "bybit",
+                        }
+                    )
+                except Exception:
+                    continue
+
+            logger.info(f"[get_positions] Bybit: {len(positions)} positions")
+            return {"status": "success", "data": positions}
+        except Exception as e:
+            logger.error(f"Failed to get positions from exchange: {e}", exc_info=True)
+            raise HTTPException(status_code=502, detail=f"Failed to fetch Bybit positions: {e}")
+
+    # fallback local from SQLite
+    try:
         db = Database()
         cursor = db.conn.cursor()
-        
         cursor.execute(
             """
             SELECT symbol, side, size, entry_price, mark_price, unrealised_pnl
             FROM positions
             WHERE size > 0
             ORDER BY created_at DESC
-        """
+            """
         )
-        
         positions = []
         for row in cursor.fetchall():
-            symbol = row[0]
-            side = row[1]
-            size = float(row[2])
-            entry_price = float(row[3])
-            mark_price = float(row[4])
-            unrealised_pnl = float(row[5])
-            
-            # Calculate PnL percentage
-            pnl_pct = 0.0
-            if entry_price > 0:
-                pnl_pct = (unrealised_pnl / (entry_price * size)) * 100 if (entry_price * size) != 0 else 0
-            
-            positions.append({
-                "symbol": symbol,
-                "side": side.upper(),
-                "size": size,
-                "entry_price": entry_price,
-                "mark_price": mark_price,
-                "pnl": unrealised_pnl,
-                "pnl_pct": round(pnl_pct, 2),
-            })
-        
+            symbol, side, size, entry_price, mark_price, pnl = row
+            size_f = float(size or 0.0)
+            entry_price_f = float(entry_price or 0.0)
+            denom = abs(size_f) * entry_price_f
+            pnl_pct = (float(pnl or 0.0) / denom * 100.0) if denom > 0 else 0.0
+            positions.append(
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "size": size_f,
+                    "entry_price": entry_price_f,
+                    "mark_price": float(mark_price or 0.0),
+                    "pnl": float(pnl or 0.0),
+                    "pnl_pct": pnl_pct,
+                    "source": "local",
+                }
+            )
         db.close()
-        
-        return {
-            "status": "success",
-            "source": "simulated",
-            "data": positions,
-        }
-
+        logger.info(f"[get_positions] Local: {len(positions)} positions")
+        return {"status": "success", "data": positions}
     except Exception as e:
-        logger.error(f"Failed to get positions: {e}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "data": []
-        }
+        logger.error(f"Failed to get local positions: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/account/status")
@@ -1231,9 +1190,9 @@ async def get_account_status():
 
                 "margin_status": "Regular Margin",
 
-                "mode": config.get("trading.mode") or "paper",
+                "mode": config.get("bot.mode") or "paper",
 
-                "symbol": config.get("trading.symbol") or "BTCUSDT",
+                "symbol": config.get("bot.symbol") or "BTCUSDT",
 
                 "testnet": config.get("trading.testnet") or True,
 
@@ -1329,7 +1288,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if balance_response.get("status") == "success":
                 await websocket.send_json({
                     "type": "initial_balance",
-                    "data": balance_response.get("data"),
+                    "balance": balance_response.get("data"),
                     "source": balance_response.get("source", "simulated"),
                 })
             
@@ -1338,7 +1297,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if positions_response.get("status") == "success":
                 await websocket.send_json({
                     "type": "initial_positions",
-                    "data": positions_response.get("data", []),
+                    "positions": positions_response.get("data", []),
                     "source": positions_response.get("source", "simulated"),
                 })
             
@@ -1350,8 +1309,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     "account_status": "normal",
                     "account_type": "Unified Trading Account",
                     "margin_status": "Regular Margin",
-                    "mode": config.get("trading.mode") or "paper",
-                    "symbol": config.get("trading.symbol") or "BTCUSDT",
+                    "mode": config.get("bot.mode") or "paper",
+                    "symbol": config.get("bot.symbol") or "BTCUSDT",
                 },
             })
             
@@ -1546,8 +1505,8 @@ async def start_bot():
         
         # Get config
         config = get_config()
-        mode = config.get("trading.mode") or "paper"
-        testnet = config.get("trading.testnet", True)
+        mode = config.get("bot.mode") or "paper"
+        testnet = config.get("bot.testnet", True)
         
         # Create strategies
         strategies = [
