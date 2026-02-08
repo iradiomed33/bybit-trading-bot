@@ -140,7 +140,12 @@ class MultiSymbolTradingBot:
         
         # Ожидаем завершения всех потоков или прерывания
         try:
-            while self.is_running and any(t.is_alive() for t in self.bot_threads.values()):
+            # Кешируем список потоков для оптимизации
+            threads = list(self.bot_threads.values())
+            while self.is_running:
+                # Проверяем раз в секунду, живы ли потоки
+                if not any(t.is_alive() for t in threads):
+                    break
                 time.sleep(1)
         except KeyboardInterrupt:
             logger.info("Received interrupt signal, stopping all bots...")
