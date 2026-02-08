@@ -91,18 +91,30 @@ class KillSwitch:
         cursor = self.db.conn.cursor()
 
         threshold = float(self.db.conn.execute("SELECT strftime('%s', 'now', '-1 day')").fetchone()[0])
+        # Берём самую свежую активацию и самый свежий сброс
         cursor.execute(
             """
-            SELECT COUNT(*) FROM errors
-            WHERE error_type = 'kill_switch_activated'
-            AND CAST(timestamp AS REAL) > ?
+            SELECT MAX(CAST(timestamp AS REAL)) FROM errors
+            WHERE error_type = 'kill_switch_activated' AND CAST(timestamp AS REAL) > ?
         """,
             (threshold,),
         )
+        last_activation = cursor.fetchone()[0]
 
-        count = cursor.fetchone()[0]
+        cursor.execute(
+            """
+            SELECT MAX(CAST(timestamp AS REAL)) FROM errors
+            WHERE error_type = 'kill_switch_reset'
+        """
+        )
+        last_reset = cursor.fetchone()[0]
 
-        if count > 0 and not self.is_activated:
+        # Если активаций нет или они старше последнего сброса — считаем выключенным
+        if not last_activation or (last_reset and last_reset >= last_activation):
+            self.is_activated = False
+            return False
+
+        if not self.is_activated:
 
             logger.warning("Kill switch was previously activated (found in DB)")
             logger.warning("To reset: python cli.py reset-kill-switch  OR  python reset_killswitch.py")
