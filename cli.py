@@ -1259,21 +1259,41 @@ def paper_command():
 
         from bot.multi_symbol_bot import MultiSymbolTradingBot
         from config.settings import get_config
-
-        strategies = [
-
-            TrendPullbackStrategy(),
-
-            BreakoutStrategy(),
-
-            MeanReversionStrategy(),
-
-        ]
+        
+        # Читаем конфиг
+        config = get_config()
+        
+        # Читаем active_strategies из конфига
+        active_strategy_names = config.get("trading.active_strategies", [
+            "TrendPullback", "Breakout", "MeanReversion"
+        ])
+        
+        # Создаем только активные стратегии
+        strategy_map = {
+            "TrendPullback": TrendPullbackStrategy,
+            "Breakout": BreakoutStrategy,
+            "MeanReversion": MeanReversionStrategy,
+        }
+        
+        strategies = []
+        for name in active_strategy_names:
+            if name in strategy_map:
+                strategies.append(strategy_map[name]())
+                logger.info(f"Loaded strategy: {name}")
+            else:
+                logger.warning(f"Unknown strategy in config: {name}")
+        
+        if not strategies:
+            logger.error("No valid strategies configured! Using defaults.")
+            strategies = [
+                TrendPullbackStrategy(),
+                BreakoutStrategy(),
+                MeanReversionStrategy(),
+            ]
 
         testnet = Config.ENVIRONMENT == "testnet"
         
         # Читаем symbols из конфига
-        config = get_config()
         symbols = config.get("trading.symbols", ["BTCUSDT"])
         
         logger.info(f"Loading symbols from config: {symbols}")
@@ -1312,21 +1332,41 @@ def live_command():
 
         from bot.multi_symbol_bot import MultiSymbolTradingBot
         from config.settings import get_config
-
-        strategies = [
-
-            TrendPullbackStrategy(),
-
-            BreakoutStrategy(),
-
-            MeanReversionStrategy(),
-
-        ]
+        
+        # Читаем конфиг
+        config = get_config()
+        
+        # Читаем active_strategies из конфига
+        active_strategy_names = config.get("trading.active_strategies", [
+            "TrendPullback", "Breakout", "MeanReversion"
+        ])
+        
+        # Создаем только активные стратегии
+        strategy_map = {
+            "TrendPullback": TrendPullbackStrategy,
+            "Breakout": BreakoutStrategy,
+            "MeanReversion": MeanReversionStrategy,
+        }
+        
+        strategies = []
+        for name in active_strategy_names:
+            if name in strategy_map:
+                strategies.append(strategy_map[name]())
+                logger.info(f"Loaded strategy: {name}")
+            else:
+                logger.warning(f"Unknown strategy in config: {name}")
+        
+        if not strategies:
+            logger.error("No valid strategies configured! Using defaults.")
+            strategies = [
+                TrendPullbackStrategy(),
+                BreakoutStrategy(),
+                MeanReversionStrategy(),
+            ]
 
         testnet = Config.ENVIRONMENT == "testnet"
         
         # Читаем symbols из конфига
-        config = get_config()
         symbols = config.get("trading.symbols", ["BTCUSDT"])
         
         logger.info(f"Loading symbols from config: {symbols}")

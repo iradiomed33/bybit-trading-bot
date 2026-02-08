@@ -1444,12 +1444,33 @@ async def start_bot():
         symbols = config.get("trading.symbols", ["BTCUSDT"])
         logger.info(f"Loading symbols from config for API: {symbols}")
         
-        # Create strategies
-        strategies = [
-            TrendPullbackStrategy(),
-            BreakoutStrategy(),
-            MeanReversionStrategy(),
-        ]
+        # Читаем active_strategies из конфига
+        active_strategy_names = config.get("trading.active_strategies", [
+            "TrendPullback", "Breakout", "MeanReversion"
+        ])
+        
+        # Создаем только активные стратегии
+        strategy_map = {
+            "TrendPullback": TrendPullbackStrategy,
+            "Breakout": BreakoutStrategy,
+            "MeanReversion": MeanReversionStrategy,
+        }
+        
+        strategies = []
+        for name in active_strategy_names:
+            if name in strategy_map:
+                strategies.append(strategy_map[name]())
+                logger.info(f"Loaded strategy from config: {name}")
+            else:
+                logger.warning(f"Unknown strategy in config: {name}")
+        
+        if not strategies:
+            logger.error("No valid strategies configured! Using defaults.")
+            strategies = [
+                TrendPullbackStrategy(),
+                BreakoutStrategy(),
+                MeanReversionStrategy(),
+            ]
         
         # Create bot instance
         bot_instance = MultiSymbolTradingBot(mode=mode, strategies=strategies, testnet=testnet, symbols=symbols)

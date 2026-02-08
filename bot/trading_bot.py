@@ -118,6 +118,10 @@ class TradingBot:
         self.testnet = testnet
 
         self.is_running = False
+        
+        # Читаем конфиг для использования настроек
+        from config.settings import get_config
+        self.config = get_config()
 
         # Инициализация компонентов
 
@@ -336,8 +340,13 @@ class TradingBot:
             self.signal_handler = None
 
         self.pipeline = FeaturePipeline()
-
-        self.meta_layer = MetaLayer(strategies)
+        
+        # Читаем настройки meta_layer из конфига
+        use_mtf = self.config.get("meta_layer.use_mtf", True)
+        mtf_score_threshold = self.config.get("meta_layer.mtf_score_threshold", 0.6)
+        
+        logger.info(f"Creating MetaLayer with use_mtf={use_mtf}, mtf_score_threshold={mtf_score_threshold}")
+        self.meta_layer = MetaLayer(strategies, use_mtf=use_mtf, mtf_score_threshold=mtf_score_threshold)
 
         # Risk
 
@@ -710,8 +719,10 @@ class TradingBot:
                             self.position_state_manager.close_position()
 
                 # Пауза перед следующей итерацией
-
-                time.sleep(10)  # 10 секунд
+                # Используем data_refresh_interval из конфига
+                refresh_interval = self.config.get("market_data.data_refresh_interval", 10)
+                logger.debug(f"Waiting {refresh_interval} seconds before next iteration...")
+                time.sleep(refresh_interval)
 
         except KeyboardInterrupt:
 
