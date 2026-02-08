@@ -241,9 +241,14 @@ class TradingBot:
                 max_notional=Decimal("50000"),
                 daily_loss_limit_percent=Decimal("5"),
                 max_drawdown_percent=Decimal("10"),
+                # ИЗМЕНЕНО: Оставляем только daily loss check, остальные проверки отключены
+                enable_leverage_check=False,
+                enable_notional_check=False,
+                enable_daily_loss_check=True,
+                enable_drawdown_check=False,
             )
             self.advanced_risk_limits = AdvancedRiskLimits(self.db, risk_config)
-            logger.info("Advanced risk limits initialized (leverage/notional/daily_loss/drawdown)")
+            logger.info("Advanced risk limits initialized (ONLY daily_loss check enabled)")
         else:
             self.advanced_risk_limits = None
 

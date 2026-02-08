@@ -106,10 +106,8 @@ class RiskMonitorService:
         
         logger.info("RiskMonitorService initialized")
         logger.info(f"  Symbol: {symbol}")
-        logger.info(f"  Max Daily Loss: {self.config.max_daily_loss_percent}%")
-        logger.info(f"  Max Position Notional: ${self.config.max_position_notional}")
-        logger.info(f"  Max Leverage: {self.config.max_leverage}x")
-        logger.info(f"  Max Orders per Symbol: {self.config.max_orders_per_symbol}")
+        logger.info(f"  АКТИВНА ТОЛЬКО ПРОВЕРКА: Daily Loss > {self.config.max_daily_loss_percent}%")
+        logger.info(f"  Остальные проверки ОТКЛЮЧЕНЫ (leverage, notional, drawdown, orders)")
         logger.info(f"  Monitor Interval: {self.config.monitor_interval_seconds}s")
         logger.info(f"  Auto Kill Switch: {self.config.enable_auto_kill_switch}")
     
@@ -337,16 +335,10 @@ class RiskMonitorService:
             "new_position_notional": 0,  # Not opening new position during monitoring
         }
         
-        # Check with AdvancedRiskLimits
+        # Check with AdvancedRiskLimits (только daily loss check активен)
         decision, details = self.advanced_risk_limits.evaluate(state)
         
-        # Additional check: max orders per symbol
-        orders_violation = None
-        if order_count > self.config.max_orders_per_symbol:
-            orders_violation = (
-                f"Too many open orders: {order_count} > {self.config.max_orders_per_symbol}"
-            )
-            logger.warning(orders_violation)
+        # ИЗМЕНЕНО: Убрана проверка max_orders_per_symbol - оставляем только daily loss
         
         # Compile results
         result = {
@@ -360,7 +352,6 @@ class RiskMonitorService:
             "open_orders_count": order_count,
             "violations": details.get("violations", []),
             "warnings": details.get("warnings", []),
-            "orders_violation": orders_violation,
             "timestamp": datetime.now(),
         }
         
