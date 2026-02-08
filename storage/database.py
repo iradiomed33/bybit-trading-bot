@@ -971,8 +971,6 @@ class Database:
             key: Ключ параметра
             value: Значение параметра (будет сконвертировано в строку JSON)
         """
-        import json
-        
         cursor = self.conn.cursor()
         value_str = json.dumps(value)
         
@@ -998,8 +996,6 @@ class Database:
         Returns:
             Значение параметра или default
         """
-        import json
-        
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -1015,9 +1011,10 @@ class Database:
         
         try:
             return json.loads(row[0])
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to decode config value for key '{key}', returning as string")
-            return row[0]
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to decode config value for key '{key}': {e}. This indicates data corruption.")
+            # Return default instead of corrupted data
+            return default
 
     def close(self):
         """Закрыть соединение с БД"""

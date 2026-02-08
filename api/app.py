@@ -1606,8 +1606,10 @@ async def reset_killswitch():
         success_old = kill_switch.reset("RESET")
         
         # Reset KillSwitchManager (clears trading_disabled flag)
-        # We need a client for KillSwitchManager, but we don't need it for reset
-        # So we create a minimal instance
+        # We try two approaches:
+        # 1. If we can create KillSwitchManager, use its reset() method
+        # 2. Otherwise, directly clear the trading_disabled flag in DB
+        success_manager = False
         try:
             config = get_config()
             rest_client = BybitRestClient(
@@ -1625,8 +1627,15 @@ async def reset_killswitch():
             success_manager = True
             logger.info("KillSwitchManager reset successfully")
         except Exception as e:
-            logger.warning(f"Failed to reset KillSwitchManager (might not be initialized): {e}")
-            success_manager = True  # Don't fail if manager wasn't used
+            logger.warning(f"Could not use KillSwitchManager for reset: {e}")
+            # Fallback: directly clear the flag in database
+            try:
+                db.save_config("trading_disabled", False)
+                success_manager = True
+                logger.info("trading_disabled flag cleared directly in database")
+            except Exception as e2:
+                logger.error(f"Failed to clear trading_disabled flag: {e2}")
+                success_manager = False
         
         if success_old and success_manager:
             logger.info("Kill switch reset successfully via API (both old and new)")
