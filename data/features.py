@@ -476,9 +476,27 @@ class FeaturePipeline:
 
         lower_wick = df[["close", "open"]].min(axis=1) - df["low"]
 
-        # Если тень > 3x тела - аномалия
-
-        df["anomaly_wick"] = ((upper_wick > 3 * body) | (lower_wick > 3 * body)).astype(int)
+        # Защита от нулевого body (doji-свечи):
+        # Используем body_safe = max(body, eps), где eps - минимальный порог
+        # Также используем процент от цены для более надежной проверки
+        
+        # Минимальный порог для body: 0.1% от цены закрытия
+        # Если body меньше этого порога, используем сам порог
+        min_body_threshold = df["close"] * 0.001
+        body_safe = body.where(body > min_body_threshold, min_body_threshold)
+        
+        # Тень считается аномальной если:
+        # 1. Тень > 3x безопасного тела И
+        # 2. Тень > 2% от цены (чтобы отфильтровать маленькие doji)
+        # Это означает, что экстремальная тень должна быть действительно большой относительно цены
+        wick_threshold_percent = df["close"] * 0.02  # 2% от цены
+        
+        wick_anomaly_condition = (
+            ((upper_wick > 3 * body_safe) | (lower_wick > 3 * body_safe)) &
+            ((upper_wick > wick_threshold_percent) | (lower_wick > wick_threshold_percent))
+        )
+        
+        df["anomaly_wick"] = wick_anomaly_condition.astype(int)
 
         # Низкий объём (< 20% от среднего)
 

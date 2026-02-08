@@ -1257,7 +1257,8 @@ def paper_command():
 
         from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
 
-        from bot import TradingBot
+        from bot.multi_symbol_bot import MultiSymbolTradingBot
+        from config.settings import get_config
 
         strategies = [
 
@@ -1270,8 +1271,14 @@ def paper_command():
         ]
 
         testnet = Config.ENVIRONMENT == "testnet"
+        
+        # Читаем symbols из конфига
+        config = get_config()
+        symbols = config.get("trading.symbols", ["BTCUSDT"])
+        
+        logger.info(f"Loading symbols from config: {symbols}")
 
-        bot = TradingBot(mode="paper", strategies=strategies, testnet=testnet)
+        bot = MultiSymbolTradingBot(mode="paper", strategies=strategies, testnet=testnet, symbols=symbols)
 
         bot.run()
 
@@ -1303,7 +1310,8 @@ def live_command():
 
         from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
 
-        from bot import TradingBot
+        from bot.multi_symbol_bot import MultiSymbolTradingBot
+        from config.settings import get_config
 
         strategies = [
 
@@ -1316,8 +1324,14 @@ def live_command():
         ]
 
         testnet = Config.ENVIRONMENT == "testnet"
+        
+        # Читаем symbols из конфига
+        config = get_config()
+        symbols = config.get("trading.symbols", ["BTCUSDT"])
+        
+        logger.info(f"Loading symbols from config: {symbols}")
 
-        bot = TradingBot(mode="live", strategies=strategies, testnet=testnet)
+        bot = MultiSymbolTradingBot(mode="live", strategies=strategies, testnet=testnet, symbols=symbols)
 
         bot.run()
 
