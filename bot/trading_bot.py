@@ -411,13 +411,17 @@ class TradingBot:
 
         logger.info(f"Starting bot in {self.mode.upper()} mode...")
 
-        # Проверка kill switch
-
+        # Проверка kill switch (проверяем оба - старый и новый)
+        # 1. Старый KillSwitch (проверяет таблицу errors)
         if self.kill_switch.check_status():
-
             logger.error("Kill switch is active! Cannot start. Reset with confirmation first.")
-
             return
+        
+        # 2. KillSwitchManager (проверяет флаг trading_disabled)
+        if self.mode == "live" and self.kill_switch_manager:
+            if not self.kill_switch_manager.can_trade():
+                logger.error("Trading is disabled (trading_disabled flag set)! Cannot start. Reset with confirmation first.")
+                return
 
         # Выполняем первоначальную сверку состояния с биржей (для live режима)
         if self.mode == "live" and self.reconciliation_service:

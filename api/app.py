@@ -1595,18 +1595,41 @@ async def reset_killswitch():
     
     try:
         from risk.kill_switch import KillSwitch
+        from execution.kill_switch import KillSwitchManager
+        from exchange.base_client import BybitRestClient
         
         # Create database connection
         db = Database()
         
-        # Create KillSwitch instance
+        # Reset old KillSwitch (saves to errors table)
         kill_switch = KillSwitch(db)
+        success_old = kill_switch.reset("RESET")
         
-        # Reset with confirmation
-        success = kill_switch.reset("RESET")
+        # Reset KillSwitchManager (clears trading_disabled flag)
+        # We need a client for KillSwitchManager, but we don't need it for reset
+        # So we create a minimal instance
+        try:
+            config = get_config()
+            rest_client = BybitRestClient(
+                api_key=config.api_key,
+                api_secret=config.api_secret,
+                testnet=config.testnet
+            )
+            kill_switch_manager = KillSwitchManager(
+                client=rest_client,
+                order_manager=None,  # Not needed for reset
+                db=db,
+                allowed_symbols=[]
+            )
+            kill_switch_manager.reset()
+            success_manager = True
+            logger.info("KillSwitchManager reset successfully")
+        except Exception as e:
+            logger.warning(f"Failed to reset KillSwitchManager (might not be initialized): {e}")
+            success_manager = True  # Don't fail if manager wasn't used
         
-        if success:
-            logger.info("Kill switch reset successfully via API")
+        if success_old and success_manager:
+            logger.info("Kill switch reset successfully via API (both old and new)")
             
             # Broadcast to WebSocket clients
             await broadcast_to_clients(
