@@ -1432,13 +1432,17 @@ async def start_bot():
 
     try:
         # Import here to avoid circular dependencies
-        from bot.trading_bot import TradingBot
+        from bot.multi_symbol_bot import MultiSymbolTradingBot
         from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
         
         # Get config
         config = get_config()
         mode = config.get("trading.mode") or "paper"
         testnet = config.get("trading.testnet", True)
+        
+        # Читаем symbols из конфига
+        symbols = config.get("trading.symbols", ["BTCUSDT"])
+        logger.info(f"Loading symbols from config for API: {symbols}")
         
         # Create strategies
         strategies = [
@@ -1448,7 +1452,7 @@ async def start_bot():
         ]
         
         # Create bot instance
-        bot_instance = TradingBot(mode=mode, strategies=strategies, testnet=testnet)
+        bot_instance = MultiSymbolTradingBot(mode=mode, strategies=strategies, testnet=testnet, symbols=symbols)
         
         # Add WebSocket handler to bot's logger
         bot_logger = logging.getLogger("bot.trading_bot")
