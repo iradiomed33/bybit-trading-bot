@@ -110,8 +110,16 @@ class KillSwitch:
         )
         last_reset = cursor.fetchone()[0]
 
-        # Если активаций нет или они старше последнего сброса — считаем выключенным
-        if not last_activation or (last_reset and last_reset > last_activation):
+        # Если активаций в окне нет — оставляем состояние как есть,
+        # но явный reset в окне всё равно снимает блокировку
+        if not last_activation:
+            if last_reset:
+                self.is_activated = False
+                return False
+            return self.is_activated
+
+        # Если есть сброс новее активации — считаем выключенным
+        if last_reset and last_reset > last_activation:
             self.is_activated = False
             return False
 
