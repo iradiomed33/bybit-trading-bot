@@ -5,12 +5,13 @@ Multi-Symbol Trading Bot: обработка нескольких торговы
 по одному на каждый торговый символ из конфигурации.
 
 Поддерживает:
-- Последовательную обработку символов (rotation)
+- Параллельную обработку символов (threading)
 - Индивидуальные риск-лимиты для каждого символа
 - Корректное логирование с указанием Symbol
 """
 
 import time
+import threading
 from typing import List, Dict, Any, Optional
 from logger import setup_logger
 from config.settings import get_config
@@ -60,6 +61,8 @@ class MultiSymbolTradingBot:
         
         # Создаем экземпляр TradingBot для каждого символа
         self.bots: Dict[str, TradingBot] = {}
+        self.bot_threads: Dict[str, threading.Thread] = {}
+        
         for symbol in self.symbols:
             try:
                 logger.info(f"Initializing bot for {symbol}...")
@@ -80,49 +83,67 @@ class MultiSymbolTradingBot:
         
         logger.info(f"Successfully initialized {len(self.bots)}/{len(self.symbols)} bots")
     
+    def _run_bot_in_thread(self, symbol: str, bot: TradingBot):
+        """
+        Запустить бот для символа в отдельном потоке.
+        
+        Args:
+            symbol: Символ для торговли
+            bot: Экземпляр TradingBot
+        """
+        logger.info(f"[Thread-{symbol}] Starting bot for {symbol}...")
+        try:
+            bot.run()
+        except KeyboardInterrupt:
+            logger.info(f"[Thread-{symbol}] Received interrupt signal")
+        except Exception as e:
+            logger.error(f"[Thread-{symbol}] Bot crashed: {e}", exc_info=True)
+        finally:
+            logger.info(f"[Thread-{symbol}] Bot stopped for {symbol}")
+    
     def run(self):
         """
         Запустить обработку всех символов.
         
-        ПРОСТОЕ РЕШЕНИЕ: Запускаем боты последовательно, каждый обрабатывает
-        свой symbol в цикле. Логика rotation реализуется через time.sleep между символами.
-        
-        Для полноценного multi-symbol потребуется рефакторинг TradingBot,
-        но это минимальное изменение, которое уже обеспечивает:
-        - Обработку всех символов из конфига
-        - Корректное логирование Symbol для каждой пары
-        - Индивидуальные риск-параметры per symbol
+        Каждый бот запускается в отдельном потоке, что позволяет:
+        - Параллельно обрабатывать все символы из конфига
+        - Корректно логировать Symbol для каждой пары
+        - Иметь индивидуальные риск-параметры per symbol
         """
         logger.info("=" * 70)
         logger.info(f"Starting Multi-Symbol Trading Bot in {self.mode.upper()} mode")
         logger.info(f"Symbols to trade: {', '.join(self.symbols)}")
         logger.info(f"Total bots: {len(self.bots)}")
         logger.info("=" * 70)
-        logger.warning("⚠️  Multi-symbol mode: бот будет обрабатывать только ПЕРВЫЙ символ")
-        logger.warning(f"    Обрабатывается: {self.symbols[0] if self.symbols else 'NONE'}")
-        logger.warning("    Для полной multi-symbol поддержки требуется рефакторинг")
-        logger.info("=" * 70)
         
-        # ВРЕМЕННОЕ РЕШЕНИЕ: Запускаем бот только для первого символа
-        # Это минимальное изменение, которое уже позволяет читать symbols из конфига
-        # и корректно логировать Symbol
         if not self.symbols or not self.bots:
             logger.error("No symbols or bots available!")
             return
         
-        primary_symbol = self.symbols[0]
-        primary_bot = self.bots.get(primary_symbol)
+        self.is_running = True
         
-        if not primary_bot:
-            logger.error(f"No bot found for primary symbol {primary_symbol}")
-            return
+        # Запускаем бот для каждого символа в отдельном потоке
+        for symbol, bot in self.bots.items():
+            logger.info(f"Starting thread for {symbol}...")
+            thread = threading.Thread(
+                target=self._run_bot_in_thread,
+                args=(symbol, bot),
+                name=f"Bot-{symbol}",
+                daemon=True
+            )
+            thread.start()
+            self.bot_threads[symbol] = thread
+            logger.info(f"✓ Thread for {symbol} started")
         
-        # Запускаем бот для первого символа
-        logger.info(f"Running bot for {primary_symbol}...")
+        logger.info(f"All {len(self.bot_threads)} bot threads started")
+        logger.info("=" * 70)
+        
+        # Ожидаем завершения всех потоков или прерывания
         try:
-            primary_bot.run()
+            while self.is_running and any(t.is_alive() for t in self.bot_threads.values()):
+                time.sleep(1)
         except KeyboardInterrupt:
-            logger.info("Received interrupt signal")
+            logger.info("Received interrupt signal, stopping all bots...")
         finally:
             self.stop()
     
@@ -131,6 +152,7 @@ class MultiSymbolTradingBot:
         logger.info("Stopping all bots...")
         self.is_running = False
         
+        # Останавливаем все боты
         for symbol, bot in self.bots.items():
             try:
                 logger.info(f"Stopping bot for {symbol}...")
@@ -138,6 +160,14 @@ class MultiSymbolTradingBot:
                 logger.info(f"✓ Bot for {symbol} stopped")
             except Exception as e:
                 logger.error(f"Error stopping bot for {symbol}: {e}")
+        
+        # Ожидаем завершения всех потоков (с таймаутом)
+        for symbol, thread in self.bot_threads.items():
+            if thread.is_alive():
+                logger.info(f"Waiting for thread {symbol} to finish...")
+                thread.join(timeout=5.0)
+                if thread.is_alive():
+                    logger.warning(f"Thread {symbol} did not finish in time")
         
         logger.info("All bots stopped")
     
