@@ -1,6 +1,6 @@
 {
   "trading": {
-    "symbol": "BTCUSDT",
+    "symbol": "BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT",
     "symbols": [
       "BTCUSDT",
       "ETHUSDT",

@@ -47,17 +47,13 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 
-from config import get_config, Config
-
-from config.settings import ConfigManager
+from config import get_config
 
 from storage.database import Database
 
 from logger import setup_logger
 
 from signal_logger import get_signal_logger
-
-from exchange.account import AccountClient
 
 import logging
 
@@ -931,56 +927,6 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
 # ============================================================================
 
-# HELPERS FOR BYBIT ACCOUNT DATA
-
-# ============================================================================
-
-_account_client_cache = {
-    "api_key": None,
-    "api_secret": None,
-    "testnet": None,
-    "client": None,
-}
-
-def _get_account_client():
-    """Cached AccountClient if BYBIT keys exist; otherwise None."""
-    api_key = os.getenv("BYBIT_API_KEY", "") or getattr(Config, "BYBIT_API_KEY", "")
-    api_secret = os.getenv("BYBIT_API_SECRET", "") or getattr(Config, "BYBIT_API_SECRET", "")
-    if not api_key or not api_secret:
-        return None
-
-    cfg = get_config()
-    testnet = bool(cfg.get("trading.testnet", True))
-
-    cached = _account_client_cache
-    if (
-        cached.get("client") is not None
-        and cached.get("api_key") == api_key
-        and cached.get("api_secret") == api_secret
-        and cached.get("testnet") == testnet
-    ):
-        return cached["client"]
-
-    client = AccountClient(api_key=api_key, api_secret=api_secret, testnet=testnet)
-    _account_client_cache.update(
-        {"api_key": api_key, "api_secret": api_secret, "testnet": testnet, "client": client}
-    )
-    return client
-
-def _extract_usdt_coin_info(wallet_balance_response: dict) -> dict:
-    """Best-effort parse of /v5/account/wallet-balance for USDT coin."""
-    if wallet_balance_response.get("retCode") != 0:
-        return {}
-    accounts = wallet_balance_response.get("result", {}).get("list", [])
-    for account in accounts:
-        for coin in account.get("coin", []) or []:
-            if coin.get("coin") == "USDT":
-                return coin
-    return {}
-
-
-# ============================================================================
-
 # ACCOUNT ENDPOINTS
 
 # ============================================================================
@@ -988,183 +934,165 @@ def _extract_usdt_coin_info(wallet_balance_response: dict) -> dict:
 
 @app.get("/api/account/balance")
 async def get_balance():
-    """Получить баланс аккаунта - реальный с Bybit или локальный fallback"""
-    
-    client = _get_account_client()
-    if client is not None:
-        try:
-            wb = client.client.get(
-                "/v5/account/wallet-balance",
-                params={"accountType": "UNIFIED"},
-                signed=True,
-            )
-            usdt = _extract_usdt_coin_info(wb)
-            if not usdt:
-                raise Exception(f"USDT coin not found in wallet balance: {wb}")
+    """Получить баланс аккаунта"""
 
-            # position_value ≈ Σ |size| * markPrice
-            pos_resp = client.get_positions(category="linear", symbol=None)
-            pos_list = pos_resp.get("result", {}).get("list", []) if pos_resp.get("retCode") == 0 else []
-            position_value = 0.0
-            for p in pos_list:
-                try:
-                    size = abs(float(p.get("size", 0) or 0))
-                    if size <= 0:
-                        continue
-                    mark = float(p.get("markPrice", 0) or 0)
-                    position_value += size * mark
-                except Exception:
-                    continue
-
-            total_balance = float(usdt.get("equity") or usdt.get("walletBalance") or 0)
-            available_balance = float(
-                usdt.get("availableToWithdraw")
-                or usdt.get("availableBalance")
-                or usdt.get("availableToBorrow")
-                or 0
-            )
-            unrealized_pnl = float(usdt.get("unrealisedPnl") or 0)
-            realized_pnl = float(usdt.get("cumRealisedPnl") or 0)
-            margin_balance = float(usdt.get("marginBalance") or usdt.get("equity") or total_balance)
-
-            logger.info(f"[get_balance] Bybit: balance={total_balance}, pnl={unrealized_pnl}")
-            return {
-                "status": "success",
-                "data": {
-                    "total_balance": total_balance,
-                    "available_balance": max(available_balance, 0.0),
-                    "position_value": position_value,
-                    "unrealized_pnl": unrealized_pnl,
-                    "realized_pnl": realized_pnl,
-                    "currency": "USDT",
-                    "margin_balance": margin_balance,
-                    "source": "bybit",
-                },
-            }
-        except Exception as e:
-            logger.error(f"Failed to get balance from exchange: {e}", exc_info=True)
-            raise HTTPException(status_code=502, detail=f"Failed to fetch Bybit balance: {e}")
-
-    # fallback (если ключей нет)
     try:
+
+        # Получить данные из конфигурации/базы данных
+
         db = Database()
+
         cursor = db.conn.cursor()
+
+        # Получить все позиции для расчета
+
         cursor.execute(
+
             """
+
             SELECT SUM(size) as total_size, SUM(unrealised_pnl) as total_pnl
+
             FROM positions
+
             WHERE size > 0
-            """
+
+        """
+
         )
+
         pos_data = cursor.fetchone()
+
         total_size = pos_data[0] or 0.0
+
         total_pnl = pos_data[1] or 0.0
+
         db.close()
 
-        total_balance = 10000.0
-        position_value = float(total_size or 0.0) * 45000 if (total_size or 0) > 0 else 0.0
+        # Расчет баланса (демо значения с поправкой на позиции)
+
+        total_balance = 10000.0  # Начальный баланс
+
+        position_value = total_size * 45000 if total_size > 0 else 0.0
+
         available_balance = total_balance - position_value
 
-        logger.info(f"[get_balance] Local fallback: balance={total_balance}, pnl={total_pnl}")
         return {
+
             "status": "success",
+
             "data": {
+
                 "total_balance": total_balance,
-                "available_balance": max(available_balance, 0.0),
+
+                "available_balance": max(available_balance, 0),
+
                 "position_value": position_value,
-                "unrealized_pnl": float(total_pnl or 0.0),
+
+                "unrealized_pnl": total_pnl,
+
                 "realized_pnl": 0.0,
+
                 "currency": "USDT",
+
                 "margin_balance": position_value,
-                "source": "local",
+
             },
+
         }
+
     except Exception as e:
-        logger.error(f"Failed to get local balance: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+
+        logger.error(f"Failed to get balance: {e}")
+
+        return {
+
+            "status": "success",
+
+            "data": {
+
+                "total_balance": 10000.0,
+
+                "available_balance": 9000.0,
+
+                "position_value": 1000.0,
+
+                "unrealized_pnl": 150.0,
+
+                "realized_pnl": 0.0,
+
+                "currency": "USDT",
+
+                "margin_balance": 1000.0,
+
+            },
+
+        }
 
 
 @app.get("/api/account/positions")
 async def get_positions():
-    """Получить открытые позиции - реальные с Bybit или локальные"""
+    """Получить открытые позиции"""
 
-    client = _get_account_client()
-    if client is not None:
-        try:
-            resp = client.get_positions(category="linear", symbol=None)
-            if resp.get("retCode") != 0:
-                raise Exception(resp)
-
-            raw_positions = resp.get("result", {}).get("list", []) or []
-            positions = []
-            for p in raw_positions:
-                try:
-                    size = float(p.get("size", 0) or 0)
-                    if abs(size) <= 0:
-                        continue
-                    entry_price = float(p.get("avgPrice") or p.get("entryPrice") or 0)
-                    mark_price = float(p.get("markPrice") or 0)
-                    pnl = float(p.get("unrealisedPnl") or 0)
-                    denom = abs(size) * entry_price
-                    pnl_pct = (pnl / denom * 100.0) if denom > 0 else 0.0
-
-                    positions.append(
-                        {
-                            "symbol": p.get("symbol"),
-                            "side": p.get("side"),
-                            "size": size,
-                            "entry_price": entry_price,
-                            "mark_price": mark_price,
-                            "pnl": pnl,
-                            "pnl_pct": pnl_pct,
-                            "source": "bybit",
-                        }
-                    )
-                except Exception:
-                    continue
-
-            logger.info(f"[get_positions] Bybit: {len(positions)} positions")
-            return {"status": "success", "data": positions}
-        except Exception as e:
-            logger.error(f"Failed to get positions from exchange: {e}", exc_info=True)
-            raise HTTPException(status_code=502, detail=f"Failed to fetch Bybit positions: {e}")
-
-    # fallback local from SQLite
     try:
+
         db = Database()
+
         cursor = db.conn.cursor()
+
         cursor.execute(
+
             """
+
             SELECT symbol, side, size, entry_price, mark_price, unrealised_pnl
+
             FROM positions
+
             WHERE size > 0
+
             ORDER BY created_at DESC
-            """
+
+        """
+
         )
+
         positions = []
+
         for row in cursor.fetchall():
-            symbol, side, size, entry_price, mark_price, pnl = row
-            size_f = float(size or 0.0)
-            entry_price_f = float(entry_price or 0.0)
-            denom = abs(size_f) * entry_price_f
-            pnl_pct = (float(pnl or 0.0) / denom * 100.0) if denom > 0 else 0.0
+
             positions.append(
+
                 {
-                    "symbol": symbol,
-                    "side": side,
-                    "size": size_f,
-                    "entry_price": entry_price_f,
-                    "mark_price": float(mark_price or 0.0),
-                    "pnl": float(pnl or 0.0),
-                    "pnl_pct": pnl_pct,
-                    "source": "local",
+
+                    "symbol": row[0],
+
+                    "side": row[1],
+
+                    "size": row[2],
+
+                    "entry_price": row[3],
+
+                    "current_price": row[4],
+
+                    "pnl": row[5],
+
                 }
+
             )
+
         db.close()
-        logger.info(f"[get_positions] Local: {len(positions)} positions")
-        return {"status": "success", "data": positions}
+
+        return {
+
+            "status": "success",
+
+            "data": positions,
+
+        }
+
     except Exception as e:
-        logger.error(f"Failed to get local positions: {e}", exc_info=True)
+
+        logger.error(f"Failed to get positions: {e}")
+
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1190,9 +1118,9 @@ async def get_account_status():
 
                 "margin_status": "Regular Margin",
 
-                "mode": config.get("bot.mode") or "paper",
+                "mode": config.get("trading.mode") or "paper",
 
-                "symbol": config.get("bot.symbol") or "BTCUSDT",
+                "symbol": config.get("trading.symbol") or "BTCUSDT",
 
                 "testnet": config.get("trading.testnet") or True,
 
@@ -1272,142 +1200,140 @@ async def broadcast_message(message: Dict[str, Any]):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint для live updates с периодическими апдейтами позиций и баланса"""
+    """WebSocket endpoint для live updates"""
 
     await websocket.accept()
+
     connected_clients.add(websocket)
+
     logger.info(f"WebSocket client connected. Total: {len(connected_clients)}")
 
     try:
+
         # Отправить начальные данные при подключении
+
         try:
+
             config = get_config()
-            
-            # Получить начальный баланс
-            balance_response = await get_balance()
-            if balance_response.get("status") == "success":
-                await websocket.send_json({
+
+            db = Database()
+
+            cursor = db.conn.cursor()
+
+            # Получить позиции
+
+            cursor.execute("SELECT SUM(size), SUM(unrealised_pnl) FROM positions WHERE size > 0")
+
+            pos_data = cursor.fetchone()
+
+            total_size = pos_data[0] or 0.0
+
+            total_pnl = pos_data[1] or 0.0
+
+            db.close()
+
+            # Отправить начальный баланс
+
+            position_value = total_size * 45000 if total_size > 0 else 0.0
+
+            total_balance = 10000.0
+
+            await websocket.send_json(
+
+                {
+
                     "type": "initial_balance",
-                    "balance": balance_response.get("data"),
-                    "source": balance_response.get("source", "simulated"),
-                })
-            
-            # Получить начальные позиции
-            positions_response = await get_positions()
-            if positions_response.get("status") == "success":
-                await websocket.send_json({
-                    "type": "initial_positions",
-                    "positions": positions_response.get("data", []),
-                    "source": positions_response.get("source", "simulated"),
-                })
-            
-            # Отправить статус
-            await websocket.send_json({
-                "type": "initial_status",
-                "status": {
-                    "account_id": "123456789",
-                    "account_status": "normal",
-                    "account_type": "Unified Trading Account",
-                    "margin_status": "Regular Margin",
-                    "mode": config.get("bot.mode") or "paper",
-                    "symbol": config.get("bot.symbol") or "BTCUSDT",
-                },
-            })
-            
-            logger.info("Sent initial data to WebSocket client")
-            
+
+                    "balance": {
+
+                        "total_balance": total_balance,
+
+                        "available_balance": max(total_balance - position_value, 0),
+
+                        "position_value": position_value,
+
+                        "unrealized_pnl": total_pnl,
+
+                        "currency": "USDT",
+
+                        "margin_balance": position_value,
+
+                    },
+
+                }
+
+            )
+
+            # Отправить начальный статус
+
+            await websocket.send_json(
+
+                {
+
+                    "type": "initial_status",
+
+                    "status": {
+
+                        "account_id": "123456789",
+
+                        "account_status": "normal",
+
+                        "account_type": "Unified Trading Account",
+
+                        "margin_status": "Regular Margin",
+
+                        "mode": config.get("trading.mode") or "paper",
+
+                        "symbol": config.get("trading.symbol") or "BTCUSDT",
+
+                    },
+
+                }
+
+            )
+
         except Exception as e:
+
             logger.error(f"Failed to send initial data: {e}")
-        
-        # Создать фоновую задачу для периодических обновлений (каждые 3 секунды)
-        async def send_periodic_updates():
-            """Отправлять обновления позиций и баланса каждые 3 секунды"""
-            while True:
-                try:
-                    await asyncio.sleep(3)  # Обновлять каждые 3 секунды
-                    
-                    # Получить текущий баланс
-                    balance_response = await get_balance()
-                    if balance_response.get("status") == "success":
-                        try:
-                            await websocket.send_json({
-                                "type": "balance_update",
-                                "data": balance_response.get("data"),
-                                "source": balance_response.get("source", "simulated"),
-                                "timestamp": datetime.now().isoformat(),
-                            })
-                        except Exception as e:
-                            logger.debug(f"Failed to send balance update: {e}")
-                    
-                    # Получить текущие позиции
-                    positions_response = await get_positions()
-                    if positions_response.get("status") == "success":
-                        try:
-                            await websocket.send_json({
-                                "type": "positions_update",
-                                "data": positions_response.get("data", []),
-                                "source": positions_response.get("source", "simulated"),
-                                "timestamp": datetime.now().isoformat(),
-                            })
-                        except Exception as e:
-                            logger.debug(f"Failed to send positions update: {e}")
-                            
-                except asyncio.CancelledError:
-                    logger.debug("Periodic update task cancelled")
-                    break
-                except Exception as e:
-                    logger.warning(f"Error in periodic updates: {e}")
-        
-        # Запустить фоновую задачу
-        update_task = asyncio.create_task(send_periodic_updates())
-        
-        try:
-            # Основной loop - слушать входящие сообщения
-            while True:
-                try:
-                    # Используем timeout чтобы не блокировать forever
-                    data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                    message = json.loads(data)
-                    
-                    # Обработка команд от клиента
-                    if message.get("type") == "ping":
-                        await websocket.send_json({"type": "pong", "timestamp": datetime.now().isoformat()})
-                    
-                    elif message.get("type") == "subscribe":
-                        channel = message.get("channel")
-                        await websocket.send_json({
-                            "type": "subscribed",
-                            "channel": channel,
-                            "message": f"Subscribed to {channel}",
-                        })
-                        logger.debug(f"Client subscribed to {channel}")
-                    
-                    elif message.get("type") == "unsubscribe":
-                        channel = message.get("channel")
-                        await websocket.send_json({
-                            "type": "unsubscribed",
-                            "channel": channel,
-                        })
-                        logger.debug(f"Client unsubscribed from {channel}")
-                    
-                    else:
-                        logger.warning(f"Unknown message type: {message.get('type')}")
-                
-                except asyncio.TimeoutError:
-                    # Timeout на receive_text() - это нормально, продолжаем
-                    continue
-        finally:
-            # Отменить фоновую задачу при закрытии соединения
-            update_task.cancel()
-            try:
-                await update_task
-            except asyncio.CancelledError:
-                pass
+
+        while True:
+
+            data = await websocket.receive_text()
+
+            message = json.loads(data)
+
+            # Обработка команд от клиента
+
+            if message.get("type") == "ping":
+
+                await websocket.send_json({"type": "pong"})
+
+            elif message.get("type") == "subscribe":
+
+                channel = message.get("channel")
+
+                await websocket.send_json(
+
+                    {
+
+                        "type": "subscribed",
+
+                        "channel": channel,
+
+                    }
+
+                )
+
+            else:
+
+                logger.warning(f"Unknown message type: {message.get('type')}")
 
     except Exception as e:
+
         logger.error(f"WebSocket error: {e}")
 
     finally:
+
         connected_clients.discard(websocket)
 
         logger.info(f"WebSocket client disconnected. Total: {len(connected_clients)}")
@@ -1505,8 +1431,8 @@ async def start_bot():
         
         # Get config
         config = get_config()
-        mode = config.get("bot.mode") or "paper"
-        testnet = config.get("bot.testnet", True)
+        mode = config.get("trading.mode") or "paper"
+        testnet = config.get("trading.testnet", True)
         
         # Create strategies
         strategies = [
