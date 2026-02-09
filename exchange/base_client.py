@@ -293,6 +293,7 @@ class BybitRestClient:
                     timestamp=timestamp,
 
                 )
+                body_string = None
 
             else:
 
@@ -327,6 +328,10 @@ class BybitRestClient:
                 }
 
             )
+            
+            # Для POST запросов добавляем Content-Type
+            if method.upper() != "GET" and body_string:
+                headers["Content-Type"] = "application/json"
 
         # Retry логика
 
@@ -342,7 +347,9 @@ class BybitRestClient:
 
                 elif method.upper() == "POST":
 
-                    response = self.session.post(url, json=params, headers=headers)
+                    # ВАЖНО: отправляем тот же body_string, что использовался для подписи!
+
+                    response = self.session.post(url, data=body_string, headers=headers)
 
                 else:
 
