@@ -20,6 +20,7 @@
     "kline_limit": 500,
     "orderbook_depth": 50,
     "data_refresh_interval": 12,
+    "orderbook_sanity_max_deviation_pct": 3.0,
     "derivatives": {
       "fetch_mark_price": true,
       "fetch_index_price": true,
@@ -57,7 +58,9 @@
     "max_leverage": 10.0,
     "max_orders_per_symbol": 10,
     "monitor_interval_seconds": 30,
-    "enable_auto_kill_switch": true
+    "enable_auto_kill_switch": true,
+    "max_positions": 3,
+    "max_total_notional": 100000.0
   },
   "paper_trading": {
     "initial_balance": 10000,
@@ -97,13 +100,25 @@
       "240m",
       "D"
     ],
+    "mtf_score_threshold": 0.65,
     "volatility_filter_enabled": false,
     "volatility_threshold": 0.02,
-    "no_trade_hours": []
+    "no_trade_hours": [],
+    "risk_profile": "Balanced",
+    "high_vol_event_atr_pct": 7.0
+  },
+  "no_trade_zone": {
+    "max_atr_pct": 14.0,
+    "max_spread_pct": 0.50
+  },
+  "kill_switch": {
+    "max_consecutive_errors": 5,
+    "cooldown_minutes": 15
   },
   "execution": {
     "order_type": "limit",
     "time_in_force": "GTC",
+    "post_only": false,
     "use_breakeven": false,
     "use_partial_exit": false,
     "partial_exit_percent": 0.5

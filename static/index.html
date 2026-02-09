@@ -188,6 +188,9 @@
                 <div id="settings" class="tab-content" style="display: none;">
                     <h2 class="mb-4">Настройки</h2>
 
+                    <!-- Basic Settings -->
+                    <h4 class="mb-3">Основные настройки</h4>
+                    
                     <div class="row">
                         <div class="col-md-6">
                             <div class="card">
@@ -203,8 +206,15 @@
                                         <small class="form-text text-muted">Пары разделяй запятой и пробелом</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Основная пара</label>
-                                        <input type="text" class="form-control" id="settingSymbol" placeholder="BTCUSDT">
+                                        <label class="form-label">Таймфрейм (минут)</label>
+                                        <select class="form-select" id="settingTimeframe">
+                                            <option value="1">1 мин</option>
+                                            <option value="5">5 мин</option>
+                                            <option value="15">15 мин</option>
+                                            <option value="60">1 час</option>
+                                            <option value="240">4 часа</option>
+                                            <option value="D">1 день</option>
+                                        </select>
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label">Режим</label>
@@ -220,22 +230,165 @@
                         <div class="col-md-6">
                             <div class="card">
                                 <div class="card-header bg-primary text-white">
-                                    <h6 class="mb-0">Управление рисками</h6>
+                                    <h6 class="mb-0">Риск-менеджмент</h6>
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label">Риск позиции (%)</label>
-                                        <input type="number" class="form-control" id="settingRiskPercent" min="0.1" max="10" step="0.1">
+                                        <label class="form-label">Макс. одновременных позиций</label>
+                                        <input type="number" class="form-control" id="settingMaxPositions" min="1" max="10" step="1" value="3">
+                                        <small class="form-text text-muted">Максимальное количество открытых позиций</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Максимальное плечо</label>
-                                        <input type="number" class="form-control" id="settingMaxLeverage" min="1" max="100" step="1">
+                                        <label class="form-label">Макс. общая экспозиция (USDT)</label>
+                                        <input type="number" class="form-control" id="settingMaxTotalNotional" min="1000" max="1000000" step="1000" value="100000">
+                                        <small class="form-text text-muted">Общий нотионал на все позиции</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Риск-профиль</label>
+                                        <select class="form-select" id="settingRiskProfile">
+                                            <option value="Conservative">Conservative</option>
+                                            <option value="Balanced" selected>Balanced</option>
+                                            <option value="Aggressive">Aggressive</option>
+                                        </select>
+                                        <small class="form-text text-muted">Профиль меняет пороги в расширенных настройках</small>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Исполнение</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Тип ордера</label>
+                                        <select class="form-select" id="settingOrderType">
+                                            <option value="market">Market</option>
+                                            <option value="limit" selected>Limit</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Time in Force</label>
+                                        <select class="form-select" id="settingTimeInForce">
+                                            <option value="GTC" selected>GTC (Good Till Cancel)</option>
+                                            <option value="IOC">IOC (Immediate or Cancel)</option>
+                                            <option value="FOK">FOK (Fill or Kill)</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3 form-check">
+                                        <input type="checkbox" class="form-check-input" id="settingPostOnly">
+                                        <label class="form-check-label" for="settingPostOnly">
+                                            Post-only (только мейкер)
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">Kill-Switch</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">Лимит дневных потерь (%)</label>
+                                        <input type="number" class="form-control" id="settingDailyLossLimit" min="0.5" max="20" step="0.5" value="5.0">
+                                        <small class="form-text text-muted">Процент от баланса</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Макс. подряд ошибок</label>
+                                        <input type="number" class="form-control" id="settingMaxConsecErrors" min="1" max="20" step="1" value="5">
+                                        <small class="form-text text-muted">После этого бот уходит в cooldown</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Cooldown (минут)</label>
+                                        <input type="number" class="form-control" id="settingCooldownMinutes" min="1" max="120" step="1" value="15">
+                                        <small class="form-text text-muted">Время паузы после макс. ошибок</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Settings (collapsible) -->
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header bg-secondary text-white" style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#advancedSettings">
+                                    <h5 class="mb-0">
+                                        <i class="bi bi-gear-fill"></i> Расширенные настройки
+                                        <i class="bi bi-chevron-down float-end"></i>
+                                    </h5>
+                                </div>
+                                <div class="collapse" id="advancedSettings">
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <h6 class="mb-3">Детекция режимов рынка</h6>
+                                                <div class="mb-3">
+                                                    <label class="form-label">High Vol Event ATR (%)</label>
+                                                    <input type="number" class="form-control advanced-input" id="settingHighVolEventAtr" min="1" max="20" step="0.5" value="7.0">
+                                                    <small class="form-text text-muted">Порог ATR% для режима высокой волатильности</small>
+                                                </div>
+                                                
+                                                <h6 class="mb-3 mt-4">No-Trade Zones</h6>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Max ATR (%)</label>
+                                                    <input type="number" class="form-control advanced-input" id="settingNoTradeMaxAtr" min="5" max="30" step="1" value="14.0">
+                                                    <small class="form-text text-muted">Максимальный ATR% для торговли</small>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Max Spread (%)</label>
+                                                    <input type="number" class="form-control advanced-input" id="settingNoTradeMaxSpread" min="0.1" max="5" step="0.1" value="0.5">
+                                                    <small class="form-text text-muted">Максимальный спред для торговли</small>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="col-md-6">
+                                                <h6 class="mb-3">Качество данных</h6>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Orderbook Sanity Check (%)</label>
+                                                    <input type="number" class="form-control advanced-input" id="settingOrderbookSanity" min="1" max="10" step="0.5" value="3.0">
+                                                    <small class="form-text text-muted">Макс. отклонение стакана от цены свечи</small>
+                                                </div>
+                                                
+                                                <h6 class="mb-3 mt-4">Multi-Timeframe Analysis</h6>
+                                                <div class="mb-3 form-check">
+                                                    <input type="checkbox" class="form-check-input advanced-input" id="settingUseMTF">
+                                                    <label class="form-check-label" for="settingUseMTF">
+                                                        Использовать MTF Confluence
+                                                    </label>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">MTF Score Threshold</label>
+                                                    <input type="number" class="form-control advanced-input" id="settingMtfScoreThreshold" min="0.1" max="1" step="0.05" value="0.65">
+                                                    <small class="form-text text-muted">Порог MTF-скоринга (0..1)</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="row mt-3">
+                                            <div class="col-12">
+                                                <button class="btn btn-warning" id="resetToProfileBtn">
+                                                    <i class="bi bi-arrow-clockwise"></i> Сбросить на значения профиля
+                                                </button>
+                                                <small class="form-text text-muted d-block mt-2">
+                                                    Сброс применит значения текущего риск-профиля к расширенным настройкам
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions Row (moved to bottom) -->
                     <div class="row mt-3">
                         <div class="col-md-6">
                             <div class="card">

@@ -11,6 +11,35 @@ let config = {};
 let isConnected = false;
 let botIsRunning = false;
 let currentUsername = null;
+let advancedTouched = false; // Track if user manually edited advanced settings
+
+// Risk Profile Presets
+const RISK_PROFILES = {
+    'Conservative': {
+        high_vol_event_atr_pct: 5.0,
+        max_atr_pct: 10.0,
+        max_spread_pct: 0.30,
+        orderbook_sanity_max_deviation_pct: 2.0,
+        use_mtf: true,
+        mtf_score_threshold: 0.75
+    },
+    'Balanced': {
+        high_vol_event_atr_pct: 7.0,
+        max_atr_pct: 14.0,
+        max_spread_pct: 0.50,
+        orderbook_sanity_max_deviation_pct: 3.0,
+        use_mtf: true,
+        mtf_score_threshold: 0.65
+    },
+    'Aggressive': {
+        high_vol_event_atr_pct: 9.0,
+        max_atr_pct: 18.0,
+        max_spread_pct: 0.80,
+        orderbook_sanity_max_deviation_pct: 5.0,
+        use_mtf: false,
+        mtf_score_threshold: 0.55
+    }
+};
 
 // DOM Elements (declared globally so they can be used in any function)
 let connectionStatus = null;
@@ -287,6 +316,20 @@ function initEventListeners() {
     // Settings
     document.getElementById('savSettingsBtn').addEventListener('click', saveSettings);
     document.getElementById('resetSettingsBtn').addEventListener('click', resetSettings);
+    
+    // Risk profile change handler
+    document.getElementById('settingRiskProfile').addEventListener('change', onRiskProfileChange);
+    
+    // Reset to profile button
+    document.getElementById('resetToProfileBtn').addEventListener('click', resetToProfile);
+    
+    // Track advanced settings changes
+    const advancedInputs = document.querySelectorAll('.advanced-input');
+    advancedInputs.forEach(input => {
+        input.addEventListener('change', () => {
+            advancedTouched = true;
+        });
+    });
 }
 
 // Tab switching
@@ -471,17 +514,8 @@ function updateConnectionStatus(connected) {
         statusEl.parentElement.classList.remove('connection-online');
     }
     
-    // Update bot status badge
-    const botStatusEl = document.getElementById('botStatus');
-    if (botStatusEl) {
-        if (connected) {
-            botStatusEl.textContent = 'Active';
-            botStatusEl.className = 'badge bg-success';
-        } else {
-            botStatusEl.textContent = 'Stopped';
-            botStatusEl.className = 'badge bg-warning';
-        }
-    }
+    // Bot status badge should reflect actual bot running state, not WebSocket connection
+    // It's updated by checkBotStatus() and updateBotControlButtons()
 }
 
 function updateTime() {
@@ -561,10 +595,7 @@ async function loadSettings() {
     const configData = await apiCall('/config');
     if (!configData) return;
 
-    // Load primary symbol
-    document.getElementById('settingSymbol').value = configData.trading?.symbol || '';
-    
-    // Load multiple symbols if available
+    // Load symbols
     const symbols = configData.trading?.symbols || [];
     if (symbols.length > 0) {
         document.getElementById('settingSymbols').value = symbols.join(', ');
@@ -573,13 +604,39 @@ async function loadSettings() {
         document.getElementById('settingSymbols').value = configData.trading.symbol;
     }
     
+    // Load basic settings
+    document.getElementById('settingTimeframe').value = configData.market_data?.kline_interval || '60';
     document.getElementById('settingMode').value = configData.trading?.mode || 'paper';
-    document.getElementById('settingRiskPercent').value = configData.risk_management?.position_risk_percent || 1.0;
-    document.getElementById('settingMaxLeverage').value = configData.risk_management?.max_leverage || 10;
+    document.getElementById('settingMaxPositions').value = configData.risk_monitor?.max_positions || 3;
+    document.getElementById('settingMaxTotalNotional').value = configData.risk_monitor?.max_total_notional || 100000;
+    document.getElementById('settingRiskProfile').value = configData.meta_layer?.risk_profile || 'Balanced';
+    
+    // Load execution settings
+    document.getElementById('settingOrderType').value = configData.execution?.order_type || 'limit';
+    document.getElementById('settingTimeInForce').value = configData.execution?.time_in_force || 'GTC';
+    document.getElementById('settingPostOnly').checked = configData.execution?.post_only || false;
+    
+    // Load kill-switch settings
+    document.getElementById('settingDailyLossLimit').value = configData.risk_management?.daily_loss_limit_percent || 5.0;
+    document.getElementById('settingMaxConsecErrors').value = configData.kill_switch?.max_consecutive_errors || 5;
+    document.getElementById('settingCooldownMinutes').value = configData.kill_switch?.cooldown_minutes || 15;
+    
+    // Load advanced settings
+    document.getElementById('settingHighVolEventAtr').value = configData.meta_layer?.high_vol_event_atr_pct || 7.0;
+    document.getElementById('settingNoTradeMaxAtr').value = configData.no_trade_zone?.max_atr_pct || 14.0;
+    document.getElementById('settingNoTradeMaxSpread').value = configData.no_trade_zone?.max_spread_pct || 0.50;
+    document.getElementById('settingOrderbookSanity').value = configData.market_data?.orderbook_sanity_max_deviation_pct || 3.0;
+    document.getElementById('settingUseMTF').checked = configData.meta_layer?.use_mtf || false;
+    document.getElementById('settingMtfScoreThreshold').value = configData.meta_layer?.mtf_score_threshold || 0.65;
+    
+    // Load legacy settings
     document.getElementById('settingStopLoss').value = configData.risk_management?.stop_loss_percent || 2.0;
     document.getElementById('settingTakeProfit').value = configData.risk_management?.take_profit_percent || 5.0;
     
     console.log('[loadSettings] Loaded symbols:', symbols);
+    
+    // Reset advancedTouched flag after loading
+    advancedTouched = false;
 }
 
 
@@ -592,16 +649,43 @@ async function saveSettings() {
         .map(s => s.trim().toUpperCase())  // Trim and uppercase
         .filter(s => s.length > 0);  // Remove empty strings
     
-    const primarySymbol = document.getElementById('settingSymbol').value.toUpperCase();
-    
     const updates = {
-        'trading.symbols': symbols,  // Array of symbols
-        'trading.symbol': primarySymbol || (symbols.length > 0 ? symbols[0] : ''),  // Primary symbol
+        // Trading settings
+        'trading.symbols': symbols,
+        'trading.symbol': symbols.length > 0 ? symbols[0] : 'BTCUSDT',
         'trading.mode': document.getElementById('settingMode').value,
-        'risk_management.position_risk_percent': parseFloat(document.getElementById('settingRiskPercent').value),
-        'risk_management.max_leverage': parseInt(document.getElementById('settingMaxLeverage').value),
+        
+        // Market data settings
+        'market_data.kline_interval': document.getElementById('settingTimeframe').value,
+        'market_data.orderbook_sanity_max_deviation_pct': parseFloat(document.getElementById('settingOrderbookSanity').value),
+        
+        // Risk monitor settings
+        'risk_monitor.max_positions': parseInt(document.getElementById('settingMaxPositions').value),
+        'risk_monitor.max_total_notional': parseFloat(document.getElementById('settingMaxTotalNotional').value),
+        
+        // Execution settings
+        'execution.order_type': document.getElementById('settingOrderType').value,
+        'execution.time_in_force': document.getElementById('settingTimeInForce').value,
+        'execution.post_only': document.getElementById('settingPostOnly').checked,
+        
+        // Risk management settings
+        'risk_management.daily_loss_limit_percent': parseFloat(document.getElementById('settingDailyLossLimit').value),
         'risk_management.stop_loss_percent': parseFloat(document.getElementById('settingStopLoss').value),
         'risk_management.take_profit_percent': parseFloat(document.getElementById('settingTakeProfit').value),
+        
+        // Kill-switch settings
+        'kill_switch.max_consecutive_errors': parseInt(document.getElementById('settingMaxConsecErrors').value),
+        'kill_switch.cooldown_minutes': parseInt(document.getElementById('settingCooldownMinutes').value),
+        
+        // Meta layer settings
+        'meta_layer.risk_profile': document.getElementById('settingRiskProfile').value,
+        'meta_layer.high_vol_event_atr_pct': parseFloat(document.getElementById('settingHighVolEventAtr').value),
+        'meta_layer.use_mtf': document.getElementById('settingUseMTF').checked,
+        'meta_layer.mtf_score_threshold': parseFloat(document.getElementById('settingMtfScoreThreshold').value),
+        
+        // No-trade zone settings
+        'no_trade_zone.max_atr_pct': parseFloat(document.getElementById('settingNoTradeMaxAtr').value),
+        'no_trade_zone.max_spread_pct': parseFloat(document.getElementById('settingNoTradeMaxSpread').value),
     };
 
     console.log('[saveSettings] Saving with symbols:', symbols);
@@ -625,7 +709,51 @@ async function saveSettings() {
         if (botIsRunning) {
             showNotification('⚠️ Настройки применятся после перезапуска бота', 'warning');
         }
+        
+        // Reset advancedTouched flag after save
+        advancedTouched = false;
     }
+}
+
+// Handle risk profile change
+function onRiskProfileChange() {
+    const profile = document.getElementById('settingRiskProfile').value;
+    
+    // Only apply preset if advanced settings haven't been manually touched
+    if (!advancedTouched) {
+        applyRiskProfile(profile);
+    } else {
+        showNotification(
+            'Расширенные настройки изменены вручную. Нажмите "Сбросить на значения профиля" для применения пресета.',
+            'info'
+        );
+    }
+}
+
+// Apply risk profile preset to advanced settings
+function applyRiskProfile(profileName) {
+    const preset = RISK_PROFILES[profileName];
+    if (!preset) {
+        console.error('[applyRiskProfile] Unknown profile:', profileName);
+        return;
+    }
+    
+    document.getElementById('settingHighVolEventAtr').value = preset.high_vol_event_atr_pct;
+    document.getElementById('settingNoTradeMaxAtr').value = preset.max_atr_pct;
+    document.getElementById('settingNoTradeMaxSpread').value = preset.max_spread_pct;
+    document.getElementById('settingOrderbookSanity').value = preset.orderbook_sanity_max_deviation_pct;
+    document.getElementById('settingUseMTF').checked = preset.use_mtf;
+    document.getElementById('settingMtfScoreThreshold').value = preset.mtf_score_threshold;
+    
+    console.log('[applyRiskProfile] Applied preset:', profileName);
+}
+
+// Reset advanced settings to current risk profile
+function resetToProfile() {
+    const profile = document.getElementById('settingRiskProfile').value;
+    applyRiskProfile(profile);
+    advancedTouched = false;
+    showNotification(`Расширенные настройки сброшены на профиль ${profile}`, 'success');
 }
 
 // Reset settings
