@@ -38,6 +38,8 @@ class RiskMonitorConfig:
         max_orders_per_symbol: int = 10,
         monitor_interval_seconds: int = 30,
         enable_auto_kill_switch: bool = True,
+        max_positions: int = 3,
+        max_total_notional: float = 100000.0,
     ):
         """
         Args:
@@ -47,6 +49,8 @@ class RiskMonitorConfig:
             max_orders_per_symbol: Maximum open orders per symbol
             monitor_interval_seconds: How often to check (seconds)
             enable_auto_kill_switch: Auto-trigger kill switch on critical violations
+            max_positions: Maximum number of simultaneous positions
+            max_total_notional: Maximum total notional across all positions
         """
         self.max_daily_loss_percent = max_daily_loss_percent
         self.max_position_notional = max_position_notional
@@ -54,6 +58,8 @@ class RiskMonitorConfig:
         self.max_orders_per_symbol = max_orders_per_symbol
         self.monitor_interval_seconds = monitor_interval_seconds
         self.enable_auto_kill_switch = enable_auto_kill_switch
+        self.max_positions = max_positions
+        self.max_total_notional = max_total_notional
 
 
 class RiskMonitorService:
@@ -451,6 +457,76 @@ class RiskMonitorService:
             time.sleep(self.config.monitor_interval_seconds)
         
         logger.info("Risk monitoring loop stopped")
+    
+    def can_open_new_position(
+        self,
+        new_position_notional: float,
+        new_position_price: float
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Check if opening a new position would violate risk limits.
+        
+        Args:
+            new_position_notional: Notional value of the new position
+            new_position_price: Price of the new position
+            
+        Returns:
+            (allowed: bool, reason: str or None)
+        """
+        try:
+            # Get current positions
+            positions_response = self.account_client.get_positions(category="linear")
+            if positions_response.get("retCode") != 0:
+                logger.error(f"Failed to get positions: {positions_response}")
+                return False, "Failed to fetch current positions"
+            
+            positions = positions_response.get("result", {}).get("list", [])
+            
+            # Count open positions (excluding the current symbol if already open)
+            open_positions_count = sum(
+                1 for p in positions 
+                if float(p.get("size", 0)) > 0
+            )
+            
+            # Check max_positions limit
+            if open_positions_count >= self.config.max_positions:
+                reason = (
+                    f"Max positions limit: {open_positions_count} >= "
+                    f"{self.config.max_positions}"
+                )
+                logger.warning(f"❌ {reason}")
+                return False, reason
+            
+            # Calculate total notional across all positions
+            total_notional = sum(
+                abs(float(p.get("size", 0)) * float(p.get("avgPrice", 0)))
+                for p in positions
+                if float(p.get("size", 0)) > 0
+            )
+            
+            # Add new position notional
+            future_total_notional = total_notional + abs(new_position_notional)
+            
+            # Check max_total_notional limit
+            if future_total_notional > self.config.max_total_notional:
+                reason = (
+                    f"Max total notional limit: ${future_total_notional:.2f} > "
+                    f"${self.config.max_total_notional:.2f} "
+                    f"(current=${total_notional:.2f} + new=${abs(new_position_notional):.2f})"
+                )
+                logger.warning(f"❌ {reason}")
+                return False, reason
+            
+            # All checks passed
+            logger.info(
+                f"✅ Position limits OK: positions={open_positions_count}/{self.config.max_positions}, "
+                f"total_notional=${future_total_notional:.2f}/${self.config.max_total_notional:.2f}"
+            )
+            return True, None
+            
+        except Exception as e:
+            logger.error(f"Error checking position limits: {e}")
+            return False, f"Error checking limits: {str(e)}"
     
     def start_monitoring(self):
         """Start background monitoring thread."""

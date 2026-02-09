@@ -291,6 +291,8 @@ class TradingBot:
                 max_orders_per_symbol=self.config.get("risk_monitor.max_orders_per_symbol", 10),
                 monitor_interval_seconds=self.config.get("risk_monitor.monitor_interval_seconds", 30),
                 enable_auto_kill_switch=self.config.get("risk_monitor.enable_auto_kill_switch", True),
+                max_positions=int(self.config.get("risk_monitor.max_positions", 3)),
+                max_total_notional=float(self.config.get("risk_monitor.max_total_notional", 100000.0)),
             )
             
             self.risk_monitor = RiskMonitorService(
@@ -301,7 +303,13 @@ class TradingBot:
                 symbol=symbol,
                 config=risk_monitor_config,
             )
-            logger.info(f"[Risk Monitor] max_daily_loss={risk_monitor_config.max_daily_loss_percent}%, max_leverage={risk_monitor_config.max_leverage}, interval={risk_monitor_config.monitor_interval_seconds}s")
+            logger.info(
+                f"[Risk Monitor] max_daily_loss={risk_monitor_config.max_daily_loss_percent}%, "
+                f"max_leverage={risk_monitor_config.max_leverage}, "
+                f"max_positions={risk_monitor_config.max_positions}, "
+                f"max_total_notional=${risk_monitor_config.max_total_notional:.0f}, "
+                f"interval={risk_monitor_config.monitor_interval_seconds}s"
+            )
         else:
             self.risk_monitor = None
 
@@ -402,8 +410,16 @@ class TradingBot:
         self.risk_limits = RiskLimits(self.db)
 
         self.circuit_breaker = CircuitBreaker()
+        
+        # Initialize KillSwitch with config parameters
+        max_consecutive_errors = int(self.config.get("kill_switch.max_consecutive_errors", 5))
+        cooldown_minutes = int(self.config.get("kill_switch.cooldown_minutes", 15))
 
-        self.kill_switch = KillSwitch(self.db)
+        self.kill_switch = KillSwitch(
+            self.db,
+            max_consecutive_errors=max_consecutive_errors,
+            cooldown_minutes=cooldown_minutes
+        )
 
         # Paper mode execution components
 
@@ -553,6 +569,12 @@ class TradingBot:
 
                     time.sleep(60)
 
+                    continue
+                
+                # 3b. Check kill switch cooldown
+                if self.kill_switch.is_in_cooldown():
+                    logger.warning("⏸️  Bot in cooldown - skipping trading actions")
+                    time.sleep(30)  # Sleep and continue monitoring
                     continue
 
                 # 4. Получаем сигнал от стратегий
@@ -1257,6 +1279,33 @@ class TradingBot:
                     logger.error(f"Invalid account balance: {account_balance}")
 
                     return
+                
+                # Check position limits (max_positions, max_total_notional) before processing
+                if self.mode == "live" and self.risk_monitor:
+                    # Estimate new position notional
+                    estimated_qty = signal.get("position_size", 0)
+                    if estimated_qty == 0:
+                        # Fallback estimation: 1% of account balance
+                        estimated_qty = float(account_balance * 0.01 / signal.get("entry_price", 1))
+                    
+                    estimated_notional = estimated_qty * signal.get("entry_price", 0)
+                    
+                    can_open, reason = self.risk_monitor.can_open_new_position(
+                        new_position_notional=estimated_notional,
+                        new_position_price=signal.get("entry_price", 0)
+                    )
+                    
+                    if not can_open:
+                        logger.warning(f"Signal rejected by position limits: {reason}")
+                        signal_logger.log_signal_rejected(
+                            strategy_name=signal.get("strategy", "Unknown"),
+                            symbol=self.symbol,
+                            direction=signal.get("signal", "unknown").upper(),
+                            confidence=signal.get("confidence", 0),
+                            reasons=["risk_limits", "position_limits"],
+                            values={"limit_reason": reason},
+                        )
+                        return
 
                 # D2: Проверяем риск-лимиты перед открытием позиции
 
