@@ -187,7 +187,7 @@ class ConfigManager:
 
             "meta_layer": {
 
-                "use_mt": True,
+                "use_mtf": True,
 
                 "mtf_timeframes": ["1m", "5m", "15m", "60m", "240m", "D"],
 
@@ -210,6 +210,8 @@ class ConfigManager:
                 "volatility_filter_enabled": True,
 
                 "volatility_threshold": 0.02,
+
+                "allow_anomaly_on_testnet": True,
 
                 "no_trade_hours": [],
 

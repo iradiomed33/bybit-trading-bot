@@ -1477,69 +1477,103 @@ async def health_check():
 # Bot Control Endpoints
 
 bot_status = {
-
     "is_running": False,
-
     "mode": "paper",
-
     "last_started": None,
-
     "last_stopped": None,
-
+    # runtime metadata
+    "symbols": [],
+    "primary_symbol": None,
+    "is_multi": False,
 }
+
+def _normalize_symbols(cfg) -> List[str]:
+    """
+    Привести trading.symbol / trading.symbols к нормальному виду.
+    Поддерживает:
+      - trading.symbols: ["BTCUSDT","ETHUSDT",...]
+      - trading.symbols: "BTCUSDT, ETHUSDT"
+      - trading.symbol: "BTCUSDT"
+      - trading.symbol: "BTCUSDT, ETHUSDT" (legacy/broken state)
+    """
+    raw_symbols = cfg.get("trading.symbols", []) or []
+    symbols: List[str] = []
+    if isinstance(raw_symbols, str):
+        symbols = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+    elif isinstance(raw_symbols, list):
+        symbols = [str(s).strip() for s in raw_symbols if str(s).strip()]
+
+    if not symbols:
+        raw_primary = cfg.get("trading.symbol", "BTCUSDT")
+        if isinstance(raw_primary, str):
+            if "," in raw_primary:
+                symbols = [s.strip() for s in raw_primary.split(",") if s.strip()]
+            else:
+                symbols = [raw_primary.strip()]
+        elif isinstance(raw_primary, list):
+            symbols = [str(s).strip() for s in raw_primary if str(s).strip()]
+
+    # Normalize: uppercase + unique (preserve order)
+    out: List[str] = []
+    seen = set()
+    for s in symbols:
+        sym = s.strip().upper()
+        if not sym:
+            continue
+        if sym in seen:
+            continue
+        seen.add(sym)
+        out.append(sym)
+
+    return out or ["BTCUSDT"]
 
 
 @app.get("/api/bot/status")
 async def get_bot_status():
     """Получить статус бота"""
-
     return {
-
         "is_running": bot_status["is_running"],
-
         "mode": bot_status["mode"],
-
         "last_started": bot_status["last_started"],
-
         "last_stopped": bot_status["last_stopped"],
-
+        "symbols": bot_status.get("symbols", []),
+        "primary_symbol": bot_status.get("primary_symbol"),
+        "is_multi": bot_status.get("is_multi", False),
         "timestamp": datetime.now().isoformat(),
-
     }
 
 
 @app.post("/api/bot/start")
 async def start_bot():
     """Запустить бота"""
-
     global bot_status, bot_instance, bot_thread
 
     if bot_status["is_running"]:
-
         return {"status": "already_running", "message": "Bot is already running"}
 
     try:
         # Import here to avoid circular dependencies
         from bot.trading_bot import TradingBot
-        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
-        
+        from bot.strategy_builder import StrategyBuilder
+        from bot.multi_symbol_bot import MultiSymbolBot, MultiSymbolConfig
+
         # Get config
-        config = get_config()
-        mode = config.get("trading.mode") or "paper"
-        testnet = config.get("trading.testnet", True)
-        
-        # Create strategies
-        strategies = [
-            TrendPullbackStrategy(),
-            BreakoutStrategy(),
-            MeanReversionStrategy(),
-        ]
-        
-        # Create bot instance
-        bot_instance = TradingBot(mode=mode, strategies=strategies, testnet=testnet)
-        
-        # Add WebSocket handler to bot's logger
-        bot_logger = logging.getLogger("bot.trading_bot")
+        cfg = get_config()
+        mode = cfg.get("trading.mode") or "paper"
+        testnet = cfg.get("trading.testnet", True)
+
+        # Normalize symbols (supports both trading.symbol and trading.symbols)
+        symbols = _normalize_symbols(cfg)
+        primary_symbol = symbols[0] if symbols else "BTCUSDT"
+
+        # Build strategies from config (fresh objects per call)
+        builder = StrategyBuilder(cfg)
+
+        def build_strategies():
+            # IMPORTANT: new instances each call (per-symbol isolation)
+            return builder.build_strategies()
+
+        # Add WebSocket handler to loggers (once)
         ws_handler = WebSocketLogHandler()
         ws_handler.setLevel(logging.INFO)
         formatter = logging.Formatter(
@@ -1547,133 +1581,148 @@ async def start_bot():
             datefmt="%Y-%m-%d %H:%M:%S"
         )
         ws_handler.setFormatter(formatter)
-        bot_logger.addHandler(ws_handler)
-        
-        # Add handler to other relevant loggers
-        for logger_name in ["execution", "strategy", "risk", "signals"]:
-            sub_logger = logging.getLogger(logger_name)
-            sub_logger.addHandler(ws_handler)
-        
-        # Run bot in separate thread
-        def run_bot():
-            try:
-                logger.info(f"Starting bot thread in {mode} mode...")
-                bot_instance.run()
-            except Exception as e:
-                logger.error(f"Bot thread error: {e}", exc_info=True)
-                bot_status["is_running"] = False
-        
-        bot_thread = threading.Thread(target=run_bot, daemon=True)
-        bot_thread.start()
-        
+
+        def _attach_ws(logger_obj: logging.Logger):
+            if any(isinstance(h, WebSocketLogHandler) for h in logger_obj.handlers):
+                return
+            logger_obj.addHandler(ws_handler)
+
+        _attach_ws(logging.getLogger("bot.trading_bot"))
+        for logger_name in ["execution", "strategy", "risk", "signals", "bot.multi_symbol_bot"]:
+            _attach_ws(logging.getLogger(logger_name))
+
+        # Start bot(s)
+        if len(symbols) > 1:
+            # Multi-symbol orchestrator (spawns per-symbol TradingBot threads internally)
+            ms_cfg = MultiSymbolConfig(
+                symbols=symbols,
+                mode=mode,
+                testnet=testnet,
+            )
+            bot_instance = MultiSymbolBot(
+                config=ms_cfg,
+                strategy_builder=build_strategies,
+                config_manager=cfg,
+            )
+
+            ok_init = bot_instance.initialize()
+            if not ok_init:
+                raise RuntimeError("MultiSymbolBot.initialize() failed (see logs)")
+
+            ok_start = bot_instance.start()
+            if not ok_start:
+                raise RuntimeError("MultiSymbolBot.start() failed (see logs)")
+
+            bot_thread = None
+            bot_status["is_multi"] = True
+        else:
+            # Single-symbol TradingBot (run in background thread)
+            strategies = build_strategies()
+            bot_instance = TradingBot(
+                mode=mode,
+                strategies=strategies,
+                symbol=primary_symbol,
+                testnet=testnet,
+                config=cfg,
+            )
+
+            def run_bot():
+                try:
+                    logger.info(f"Starting bot thread in {mode} mode (symbol={primary_symbol})...")
+                    bot_instance.run()
+                except Exception as e:
+                    logger.error(f"Bot thread error: {e}", exc_info=True)
+                    bot_status["is_running"] = False
+
+            bot_thread = threading.Thread(target=run_bot, daemon=True)
+            bot_thread.start()
+            bot_status["is_multi"] = False
+
         bot_status["is_running"] = True
         bot_status["mode"] = mode
         bot_status["last_started"] = datetime.now().isoformat()
+        bot_status["symbols"] = symbols
+        bot_status["primary_symbol"] = primary_symbol
 
-        # Отправляем обновление всем WebSocket клиентам
-
+        # Notify clients
         await broadcast_to_clients(
-
             {
-
                 "type": "bot_status_changed",
-
                 "is_running": True,
-
-                "message": f"🚀 Bot started in {mode} mode",
-
+                "message": f"🚀 Bot started in {mode} mode | symbols: {', '.join(symbols)}",
                 "timestamp": datetime.now().isoformat(),
-
             }
-
         )
 
-        logger.info(f"Bot started via API in {mode} mode")
+        logger.info(f"Bot started via API in {mode} mode (symbols={symbols})")
 
         return {
-
             "status": "started",
-
             "message": f"Bot started successfully in {mode} mode",
-
             "mode": mode,
-
+            "symbols": symbols,
+            "primary_symbol": primary_symbol,
             "timestamp": datetime.now().isoformat(),
-
         }
 
     except Exception as e:
-
         bot_status["is_running"] = False
-
         logger.error(f"Failed to start bot: {e}", exc_info=True)
-
         return {"status": "error", "message": str(e)}, 500
 
 
 @app.post("/api/bot/stop")
 async def stop_bot():
     """Остановить бота"""
-
     global bot_status, bot_instance, bot_thread
 
     if not bot_status["is_running"]:
-
         return {"status": "already_stopped", "message": "Bot is not running"}
 
     try:
-        # Stop bot if running
+        # Stop bot/orchestrator if running
         if bot_instance:
             logger.info("Stopping bot instance...")
-            bot_instance.stop()
-            
-            # Wait for thread to finish (with timeout)
-            if bot_thread and bot_thread.is_alive():
-                bot_thread.join(timeout=5.0)
-                if bot_thread.is_alive():
-                    logger.warning("Bot thread did not stop cleanly")
-            
-            bot_instance = None
-            bot_thread = None
+            try:
+                bot_instance.stop()
+            except Exception as e:
+                logger.error(f"Error during bot_instance.stop(): {e}", exc_info=True)
+
+        # Wait for single-bot thread to finish (MultiSymbolBot manages its own threads)
+        if bot_thread and bot_thread.is_alive():
+            bot_thread.join(timeout=5.0)
+            if bot_thread.is_alive():
+                logger.warning("Bot thread did not stop cleanly")
+
+        bot_instance = None
+        bot_thread = None
 
         bot_status["is_running"] = False
-
         bot_status["last_stopped"] = datetime.now().isoformat()
+        bot_status["symbols"] = []
+        bot_status["primary_symbol"] = None
+        bot_status["is_multi"] = False
 
-        # Отправляем обновление всем WebSocket клиентам
-
+        # Notify clients
         await broadcast_to_clients(
-
             {
-
                 "type": "bot_status_changed",
-
                 "is_running": False,
-
                 "message": "🛑 Bot stopped",
-
                 "timestamp": datetime.now().isoformat(),
-
             }
-
         )
 
         logger.info("Bot stopped via API")
 
         return {
-
             "status": "stopped",
-
             "message": "Bot stopped successfully",
-
             "timestamp": datetime.now().isoformat(),
-
         }
 
     except Exception as e:
-
         logger.error(f"Failed to stop bot: {e}", exc_info=True)
-
         return {"status": "error", "message": str(e)}, 500
 
 

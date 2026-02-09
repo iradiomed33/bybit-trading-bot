@@ -345,7 +345,15 @@ class TradingBot:
 
         self.pipeline = FeaturePipeline()
 
-        self.meta_layer = MetaLayer(strategies)
+        # MetaLayer config (from JSON)
+        use_mtf = bool(self.config.get("meta_layer.use_mtf", True))
+        mtf_score_threshold = float(self.config.get("meta_layer.mtf_score_threshold", 0.6))
+        self.meta_layer = MetaLayer(
+            strategies,
+            use_mtf=use_mtf,
+            mtf_score_threshold=mtf_score_threshold,
+        )
+
 
         # Risk
 
@@ -535,6 +543,12 @@ class TradingBot:
                     continue
 
                 # 4. Получаем сигнал от стратегий
+
+                # Provide runtime flags to MetaLayer/NoTradeZones
+                if not features:
+                    features = {}
+                features["is_testnet"] = bool(self.testnet)
+                features["allow_anomaly_on_testnet"] = bool(self.config.get("meta_layer.allow_anomaly_on_testnet", True))
 
                 signal = self.meta_layer.get_signal(df_with_features, features)
 
@@ -765,6 +779,9 @@ class TradingBot:
 
             # Главный таймфрейм - 1h
 
+            kline_interval = str(self.config.get("market_data.kline_interval", "60"))
+            kline_limit = int(self.config.get("market_data.kline_limit", 500))
+
             try:
 
                 kline_resp = retry_api_call(
@@ -773,9 +790,9 @@ class TradingBot:
 
                     self.symbol,
 
-                    interval="60",
+                    interval=kline_interval,
 
-                    limit=500,
+                    limit=kline_limit,
 
                     max_retries=2,
 
@@ -1696,19 +1713,23 @@ class TradingBot:
 
                 # 3. Нормализуем ордер согласно instrument rules (tickSize, qtyStep, минималы)
 
-                logger.debug(f"Normalizing order: price={signal['entry_price']}, qty={qty}")
+                # Execution config: Market/Limit (default: Market)
+                desired_order_type = str(self.config.get("execution.order_type", "Market") or "Market").strip().lower()
+                order_type = "Limit" if desired_order_type in ("limit", "lmt") else "Market"
+
+                # If Limit: try to use strategy-provided target price; fallback to entry_price
+                price_for_order = float(signal.get("target_price") or signal.get("entry_price"))
+
+                logger.debug(f"Normalizing order: type={order_type}, price={price_for_order}, qty={qty}")
 
                 normalized_price, normalized_qty, is_valid, norm_message = normalize_order(
-
                     self.instruments_manager,
-
                     self.symbol,
-
-                    signal["entry_price"],
-
+                    price_for_order,
                     qty,
-
                 )
+
+
 
                 if not is_valid:
 
@@ -1718,13 +1739,13 @@ class TradingBot:
 
                 # Логируем нормализованные значения для отладки
 
-                if float(normalized_price) != signal["entry_price"] or float(normalized_qty) != qty:
+                if float(normalized_price) != float(price_for_order) or float(normalized_qty) != qty:
 
                     logger.info(
 
                         "Order normalized: "
 
-                        f"price {signal['entry_price']} → {normalized_price}, "
+                        f"price {price_for_order} → {normalized_price}, "
 
                         f"qty {qty} → {normalized_qty}"
 
@@ -1780,21 +1801,21 @@ class TradingBot:
                 )
                 
                 logger.info(f"Generated orderLinkId: {order_link_id}")
+                # time_in_force / postOnly mapping
+                time_in_force = str(self.config.get("execution.time_in_force", "GTC") or "GTC")
+                post_only = bool(self.config.get("execution.post_only", False))
+                if order_type == "Limit" and post_only:
+                    time_in_force = "PostOnly"
 
                 order_result = self.order_manager.create_order(
-
                     category="linear",
-
                     symbol=self.symbol,
-
                     side=side,
-
-                    order_type="Market",
-
+                    order_type=order_type,
                     qty=float(normalized_qty),  # Используем нормализованное количество
-
+                    price=float(normalized_price) if order_type == "Limit" else None,
+                    time_in_force=time_in_force,
                     order_link_id=order_link_id,
-
                 )
 
                 # order_result теперь OrderResult, проверяем success вместо retCode

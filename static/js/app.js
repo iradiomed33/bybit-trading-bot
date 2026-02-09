@@ -549,18 +549,11 @@ function updateDashboardFromConfig() {
     document.getElementById('botSymbol').textContent = symbolDisplay;
     
     document.getElementById('riskPercent').textContent = (config.risk_management?.position_risk_percent || 0) + '%';
-    
-    // Show bot as Active if API is connected
-    const statusBadge = document.getElementById('botStatus');
-    if (isConnected) {
-        statusBadge.textContent = 'Active';
-        statusBadge.className = 'badge bg-success';
-    } else {
-        statusBadge.textContent = 'Stopped';
-        statusBadge.className = 'badge bg-warning';
-    }
-    
-    console.log('[updateDashboardFromConfig] Updated with symbols:', symbols);
+// Не перетираем реальный running state.
+// Статус бота управляется через /api/bot/status и updateBotControlButtons().
+updateBotControlButtons();
+
+console.log('[updateDashboardFromConfig] Updated with symbols:', symbols);
 }
 
 // Load settings form

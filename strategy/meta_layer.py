@@ -383,8 +383,13 @@ class NoTradeZones:
         has_anomaly = latest.get("has_anomaly", 0)
 
         if has_anomaly == 1:
+            # На testnet правила детекта аномалий могут слишком часто срабатывать из-за
+            # малой ликвидности/редких принтов. Даем возможность смягчить это поведение.
+            is_testnet = bool(features.get("is_testnet", False))
+            allow_on_testnet = bool(features.get("allow_anomaly_on_testnet", False))
+            if not (is_testnet and allow_on_testnet):
+                return False, "Data anomaly detected"
 
-            return False, "Data anomaly detected"
 
         # 2. Плохая ликвидность (широкий спред)
 

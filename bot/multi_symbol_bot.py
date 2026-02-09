@@ -20,7 +20,7 @@ Flow:
 
 import threading
 import time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -52,12 +52,14 @@ class MultiSymbolBot:
     у каждого есть собственные (не шаренные) экземпляры стратегий.
     """
     
-    def __init__(self, config: MultiSymbolConfig):
+    def __init__(self, config: MultiSymbolConfig, strategy_builder: Optional[Callable[[], List]] = None, config_manager: Optional[Any] = None):
         """
         Args:
             config: Конфигурация
         """
         self.config = config
+        self.strategy_builder = strategy_builder
+        self.config_manager = config_manager
         self.bots: Dict[str, TradingBot] = {}
         self.threads: Dict[str, threading.Thread] = {}
         self.is_running = False
@@ -86,7 +88,10 @@ class MultiSymbolBot:
                 logger.info(f"\n[{symbol}] Creating strategies (per-symbol)...")
                 
                 # TASK-004: Создаём НОВЫЕ экземпляры стратегий для этого символа
-                strategies = StrategyFactory.create_strategies()
+                if self.strategy_builder:
+                    strategies = self.strategy_builder()
+                else:
+                    strategies = StrategyFactory.create_strategies()
                 strategy_ids = StrategyFactory.get_strategy_ids(strategies)
                 logger.info(f"[{symbol}] Strategy instances: {strategy_ids}")
                 
@@ -97,6 +102,7 @@ class MultiSymbolBot:
                     strategies=strategies,  # ВАЖНОЕ: new instances!
                     symbol=symbol,
                     testnet=self.config.testnet,
+                    config=self.config_manager,
                 )
                 
                 self.bots[symbol] = bot
