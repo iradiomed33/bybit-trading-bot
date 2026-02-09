@@ -348,10 +348,17 @@ class TradingBot:
         # MetaLayer config (from JSON)
         use_mtf = bool(self.config.get("meta_layer.use_mtf", True))
         mtf_score_threshold = float(self.config.get("meta_layer.mtf_score_threshold", 0.6))
+        high_vol_event_atr_pct = float(self.config.get("meta_layer.high_vol_event_atr_pct", 7.0))
+        no_trade_zone_max_atr_pct = float(self.config.get("no_trade_zone.max_atr_pct", 14.0))
+        no_trade_zone_max_spread_pct = float(self.config.get("no_trade_zone.max_spread_pct", 0.50))
+        
         self.meta_layer = MetaLayer(
             strategies,
             use_mtf=use_mtf,
             mtf_score_threshold=mtf_score_threshold,
+            high_vol_event_atr_pct=high_vol_event_atr_pct,
+            no_trade_zone_max_atr_pct=no_trade_zone_max_atr_pct,
+            no_trade_zone_max_spread_pct=no_trade_zone_max_spread_pct,
         )
 
 
@@ -495,10 +502,16 @@ class TradingBot:
                     continue
 
                 # 2. Строим фичи
+                
+                orderbook_sanity_max_deviation_pct = float(
+                    self.config.get("market_data.orderbook_sanity_max_deviation_pct", 3.0)
+                )
 
                 df_with_features = self.pipeline.build_features(
 
-                    data["d"], orderbook=data.get("orderbook")
+                    data["df"], 
+                    orderbook=data.get("orderbook"),
+                    orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
 
                 )
 

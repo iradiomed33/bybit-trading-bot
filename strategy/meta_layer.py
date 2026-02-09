@@ -358,11 +358,26 @@ class SignalArbitrator:
 class NoTradeZones:
 
     """Проверка условий для запрета торговли"""
+    
+    def __init__(
+        self,
+        max_atr_pct: float = 14.0,
+        max_spread_pct: float = 0.50
+    ):
+        """
+        Args:
+            max_atr_pct: Максимальный ATR% для торговли
+            max_spread_pct: Максимальный спред% для торговли
+        """
+        self.max_atr_pct = max_atr_pct
+        self.max_spread_pct = max_spread_pct
+        logger.info(
+            f"NoTradeZones initialized (max_atr_pct={max_atr_pct}, max_spread_pct={max_spread_pct})"
+        )
 
-    @staticmethod
     def is_trading_allowed(
 
-        df: pd.DataFrame, features: Dict[str, Any], error_count: int = 0
+        self, df: pd.DataFrame, features: Dict[str, Any], error_count: int = 0
 
     ) -> tuple[bool, Optional[str]]:
         """
@@ -390,18 +405,21 @@ class NoTradeZones:
             if not (is_testnet and allow_on_testnet):
                 return False, "Data anomaly detected"
 
+        # 1b. Orderbook sanity check - if orderbook invalid, block trading
+        orderbook_invalid = features.get("orderbook_invalid", False) or latest.get("orderbook_invalid", False)
+        if orderbook_invalid:
+            deviation = features.get("orderbook_deviation_pct") or latest.get("orderbook_deviation_pct", 0)
+            return False, f"Bad orderbook data: deviation={deviation:.2f}%"
 
-        # 2. Плохая ликвидность (широкий спред)
-
-        # На тестовой сети спред может быть очень большим из-за малого объёма
-
-        # Поэтому проверяем только экстремальные значения (> 10%)
-
-        spread_percent = features.get("spread_percent", 0)
-
-        if spread_percent > 10.0:  # Спред > 10% - это явно ошибка данных или запредельный спред
-
-            return False, f"Excessive spread: {spread_percent:.2f}%"
+        # 2. Плохая ликвидность (широкий спред) - CONFIGURABLE
+        # Only check spread if orderbook is valid
+        spread_percent = features.get("spread_percent")
+        if spread_percent is None:
+            spread_percent = latest.get("spread_percent", 0)
+        
+        # Skip spread check if it's None (orderbook was invalid)
+        if spread_percent is not None and spread_percent > self.max_spread_pct:
+            return False, f"Excessive spread: {spread_percent:.2f}% > {self.max_spread_pct}%"
 
         # 3. Низкая глубина стакана
 
@@ -423,15 +441,15 @@ class NoTradeZones:
 
             return False, f"Too many errors: {error_count}"
 
-        # 5. Экстремальная волатильность
+        # 5. Экстремальная волатильность - CONFIGURABLE
 
         vol_regime = latest.get("vol_regime", 0)
 
         atr_percent = latest.get("atr_percent", 0)
 
-        if vol_regime == 1 and atr_percent > 10.0:  # ATR > 10% (смягчено с 5%)
+        if vol_regime == 1 and atr_percent > self.max_atr_pct:  # Configurable threshold
 
-            return False, f"Extreme volatility: ATR={atr_percent:.2f}%"
+            return False, f"Extreme volatility: ATR={atr_percent:.2f}% > {self.max_atr_pct}%"
 
         return True, None
 
@@ -449,6 +467,12 @@ class MetaLayer:
         use_mtf: bool = True,
 
         mtf_score_threshold: float = 0.6,
+        
+        high_vol_event_atr_pct: float = 7.0,
+        
+        no_trade_zone_max_atr_pct: float = 14.0,
+        
+        no_trade_zone_max_spread_pct: float = 0.50,
 
     ):
         """
@@ -460,6 +484,12 @@ class MetaLayer:
             use_mtf: Использовать multi-timeframe confluence checks
 
             mtf_score_threshold: Порог прохождения MTF-скоринга (0..1)
+            
+            high_vol_event_atr_pct: Порог ATR% для high_vol_event
+            
+            no_trade_zone_max_atr_pct: Максимальный ATR% для торговли
+            
+            no_trade_zone_max_spread_pct: Максимальный спред% для торговли
 
         """
 
@@ -469,11 +499,16 @@ class MetaLayer:
 
         self.arbitrator = SignalArbitrator()
 
-        self.no_trade_zones = NoTradeZones()
+        self.no_trade_zones = NoTradeZones(
+            max_atr_pct=no_trade_zone_max_atr_pct,
+            max_spread_pct=no_trade_zone_max_spread_pct
+        )
 
         self.use_mtf = use_mtf
 
         self.mtf_score_threshold = mtf_score_threshold
+        
+        self.high_vol_event_atr_pct = high_vol_event_atr_pct
 
         self.timeframe_cache = TimeframeCache() if use_mtf else None
 
@@ -481,7 +516,9 @@ class MetaLayer:
 
             f"MetaLayer initialized with {len(strategies)} strategies "
 
-            f"(MTF: {use_mtf}, mtf_score_threshold={mtf_score_threshold})"
+            f"(MTF: {use_mtf}, mtf_score_threshold={mtf_score_threshold}, "
+            
+            f"high_vol_event_atr_pct={high_vol_event_atr_pct})"
 
         )
 
@@ -557,7 +594,10 @@ class MetaLayer:
 
         # 2. Определяем режим рынка
 
-        regime = self.regime_switcher.detect_regime(df)
+        regime = self.regime_switcher.detect_regime(
+            df, 
+            high_vol_atr_threshold=self.high_vol_event_atr_pct
+        )
 
         # Логируем только при смене режима
 

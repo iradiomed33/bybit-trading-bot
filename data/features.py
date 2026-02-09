@@ -316,7 +316,12 @@ class FeaturePipeline:
 
         return df
 
-    def calculate_orderflow_features(self, orderbook: Dict[str, Any]) -> Dict[str, float]:
+    def calculate_orderflow_features(
+        self, 
+        orderbook: Dict[str, Any],
+        last_close: float = None,
+        orderbook_sanity_max_deviation_pct: float = 3.0
+    ) -> Dict[str, float]:
         """
 
         Блок 4: Order Flow / Liquidity (из стакана)
@@ -331,6 +336,12 @@ class FeaturePipeline:
         - Depth imbalance (bid vs ask)
 
         - Liquidity concentration
+        
+        
+        Args:
+            orderbook: Orderbook data with bids/asks
+            last_close: Last candle close price for sanity check
+            orderbook_sanity_max_deviation_pct: Max allowed deviation from close price
 
         """
 
@@ -352,15 +363,38 @@ class FeaturePipeline:
 
         best_ask = float(asks[0][0])
 
+        # Midprice
+
+        features["midprice"] = (best_bid + best_ask) / 2
+        
+        # SANITY CHECK: Compare orderbook midprice with last candle close
+        if last_close and last_close > 0:
+            deviation_pct = abs(features["midprice"] - last_close) / last_close * 100
+            
+            if deviation_pct > orderbook_sanity_max_deviation_pct:
+                logger.warning(
+                    f"⚠️  ORDERBOOK SANITY CHECK FAILED: midprice={features['midprice']:.2f} "
+                    f"vs last_close={last_close:.2f}, deviation={deviation_pct:.2f}% "
+                    f"(threshold={orderbook_sanity_max_deviation_pct}%)"
+                )
+                # Mark orderbook as invalid - set spread to None to skip spread checks
+                features["orderbook_invalid"] = True
+                features["spread"] = None
+                features["spread_percent"] = None
+                features["orderbook_deviation_pct"] = deviation_pct
+                # Still calculate other features but they shouldn't be used
+                features["depth_imbalance"] = 0
+                features["liquidity_concentration"] = 0
+                return features
+            else:
+                features["orderbook_invalid"] = False
+                features["orderbook_deviation_pct"] = deviation_pct
+
         # Spread
 
         features["spread"] = best_ask - best_bid
 
         features["spread_percent"] = (features["spread"] / best_bid) * 100
-
-        # Midprice
-
-        features["midprice"] = (best_bid + best_ask) / 2
 
         # Depth imbalance (bid vs ask volume)
 
@@ -629,6 +663,8 @@ class FeaturePipeline:
         orderbook: Optional[Dict[str, Any]] = None,
 
         derivatives_data: Optional[Dict[str, float]] = None,
+        
+        orderbook_sanity_max_deviation_pct: float = 3.0,
 
     ) -> pd.DataFrame:
         """
@@ -643,6 +679,8 @@ class FeaturePipeline:
             orderbook: Данные стакана (опционально)
 
             derivatives_data: Деривативные метрики (опционально)
+            
+            orderbook_sanity_max_deviation_pct: Max deviation % for orderbook sanity check
 
 
         Returns:
@@ -676,8 +714,14 @@ class FeaturePipeline:
         # 4. Order Flow (если есть стакан)
 
         if orderbook:
+            # Get last close for sanity check
+            last_close = float(df.iloc[-1]["close"]) if len(df) > 0 else None
 
-            orderflow_features = self.calculate_orderflow_features(orderbook)
+            orderflow_features = self.calculate_orderflow_features(
+                orderbook,
+                last_close=last_close,
+                orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
+            )
 
             # Добавляем как последнюю строку (актуальные данные)
 
