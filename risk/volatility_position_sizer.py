@@ -61,6 +61,8 @@ class VolatilityPositionSizerConfig:
 
         percent_fallback: Decimal = Decimal("5.0"),  # 5% of account fallback
 
+        max_leverage: Decimal = Decimal("10.0"),  # Max leverage allowed
+
     ):
         """
 
@@ -78,6 +80,8 @@ class VolatilityPositionSizerConfig:
 
             percent_fallback: Fallback position size as % of account
 
+            max_leverage: Maximum leverage allowed
+
         """
 
         self.risk_percent = risk_percent
@@ -91,6 +95,8 @@ class VolatilityPositionSizerConfig:
         self.use_percent_fallback = use_percent_fallback
 
         self.percent_fallback = percent_fallback
+
+        self.max_leverage = max_leverage
 
 
 class VolatilityPositionSizer:
@@ -498,9 +504,9 @@ class VolatilityPositionSizer:
 
         leverage = position_value / account_balance if account_balance > 0 else Decimal("0")
 
-        if leverage > Decimal("10"):  # Max 10x leverage
+        if leverage > self.config.max_leverage:
 
-            return False, f"Position implies {leverage:.1f}x leverage, exceeds 10x"
+            return False, f"Position implies {leverage:.1f}x leverage, exceeds {self.config.max_leverage}x"
 
         return True, "Position size is valid"
 

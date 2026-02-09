@@ -47,13 +47,15 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 
-from config import get_config
+from config import get_config, Config
 
 from storage.database import Database
 
 from logger import setup_logger
 
 from signal_logger import get_signal_logger
+
+from exchange.account import AccountClient
 
 import logging
 
@@ -410,6 +412,8 @@ async def update_config(key: str, body: ConfigUpdate):
                 "key": key,
 
                 "value": body.value,
+
+                "config": config.config,  # <-- добавили полный конфиг
 
             }
 
@@ -1058,22 +1062,34 @@ async def get_positions():
         positions = []
 
         for row in cursor.fetchall():
+            symbol = row[0]
+            side = row[1]
+            size = row[2]
+            entry_price = row[3]
+            mark_price = row[4]
+            unrealised_pnl = row[5]
+            
+            # Вычисляем PnL в процентах
+            position_value = entry_price * size
+            pnl_pct = (unrealised_pnl / position_value * 100) if position_value > 0 else 0.0
 
             positions.append(
 
                 {
 
-                    "symbol": row[0],
+                    "symbol": symbol,
 
-                    "side": row[1],
+                    "side": side,
 
-                    "size": row[2],
+                    "size": size,
 
-                    "entry_price": row[3],
+                    "entry_price": entry_price,
 
-                    "current_price": row[4],
+                    "mark_price": mark_price,
 
-                    "pnl": row[5],
+                    "pnl": unrealised_pnl,
+
+                    "pnl_pct": pnl_pct,
 
                 }
 
@@ -1170,6 +1186,109 @@ async def get_account_status():
 
 
 # ============================================================================
+# BYBIT ACCOUNT CLIENT HELPERS
+# ============================================================================
+# BYBIT ACCOUNT CLIENT HELPERS
+# ============================================================================
+
+_account_client_cache = {"testnet": None, "client": None}
+
+
+def _safe_float(v, default=0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _get_account_client_from_env():
+    """Return AccountClient if keys exist, else None."""
+    api_key = (os.getenv("BYBIT_API_KEY") or Config.BYBIT_API_KEY or "").strip()
+    api_secret = (os.getenv("BYBIT_API_SECRET") or Config.BYBIT_API_SECRET or "").strip()
+    if not api_key or not api_secret:
+        return None
+
+    cfg = get_config()
+    testnet = bool(cfg.get("trading.testnet", True))
+
+    cached = _account_client_cache
+    if cached["client"] is not None and cached["testnet"] == testnet:
+        return cached["client"]
+
+    client = AccountClient(api_key=api_key, api_secret=api_secret, testnet=testnet)
+    _account_client_cache["testnet"] = testnet
+    _account_client_cache["client"] = client
+    return client
+
+
+def _fetch_account_snapshot_sync(testnet: bool, symbols: list):
+    """
+    Реальный снапшот по Bybit REST. Требует ключи в окружении (BYBIT_API_KEY/BYBIT_API_SECRET).
+    Returns: (balance_dict, positions_list)
+    """
+    from exchange.account import AccountClient
+
+    c = AccountClient(testnet=testnet)
+
+    # позиции
+    pos_resp = c.get_positions(category="linear")
+    if pos_resp.get("retCode") != 0:
+        raise RuntimeError(f"positions retCode={pos_resp.get('retCode')} retMsg={pos_resp.get('retMsg')}")
+    raw = pos_resp.get("result", {}).get("list", []) or []
+
+    symset = set(s.upper() for s in (symbols or []) if s)
+    positions = []
+    total_pnl = 0.0
+    position_value = 0.0
+
+    for p in raw:
+        sym = (p.get("symbol") or "").upper()
+        if symset and sym not in symset:
+            continue
+
+        size = _safe_float(p.get("size"), 0.0)
+        if abs(size) <= 0:
+            continue
+
+        entry = _safe_float(p.get("avgPrice") or p.get("entryPrice"), 0.0)
+        mark = _safe_float(p.get("markPrice"), 0.0)
+        pnl = _safe_float(p.get("unrealisedPnl"), 0.0)
+        notional = abs(size) * (mark or entry or 0.0)
+
+        total_pnl += pnl
+        position_value += notional
+
+        pnl_pct = (pnl / notional * 100.0) if notional > 0 else 0.0
+
+        positions.append({
+            "symbol": sym,
+            "side": p.get("side") or ("Buy" if size > 0 else "Sell"),
+            "size": abs(size),
+            "entry_price": entry,
+            "mark_price": mark,
+            "pnl": pnl,
+            "pnl_pct": pnl_pct,
+        })
+
+    # wallet balance (упрощённо)
+    w = c.get_wallet_balance("USDT")
+    total_balance = _safe_float(w.get("balance"), 0.0)
+
+    balance = {
+        "total_balance": total_balance,
+        "available_balance": total_balance,  # TODO: при желании парсить availableToWithdraw из сырого ответа wallet-balance
+        "position_value": position_value,
+        "unrealized_pnl": total_pnl,
+        "realized_pnl": 0.0,
+        "currency": "USDT",
+        "margin_balance": position_value,
+        "source": "bybit_rest",
+    }
+
+    return balance, positions
+
+
+# ============================================================================
 
 # WEBSOCKET ENDPOINTS
 
@@ -1208,134 +1327,109 @@ async def websocket_endpoint(websocket: WebSocket):
 
     logger.info(f"WebSocket client connected. Total: {len(connected_clients)}")
 
+    # Отправить начальные данные при подключении
     try:
+        config = get_config()
 
-        # Отправить начальные данные при подключении
-
+        # --- BALANCE: Bybit if keys exist, else local fallback ---
+        balance_payload = {}
         try:
+            balance_payload = await asyncio.to_thread(_fetch_balance_snapshot_sync)
+        except Exception as e:
+            logger.error(f"WS: failed to fetch Bybit balance: {e}", exc_info=True)
 
-            config = get_config()
-
+        if not balance_payload:
+            # Fallback: local (как было), но без притворства что это биржа
             db = Database()
-
             cursor = db.conn.cursor()
-
-            # Получить позиции
-
             cursor.execute("SELECT SUM(size), SUM(unrealised_pnl) FROM positions WHERE size > 0")
-
             pos_data = cursor.fetchone()
-
             total_size = pos_data[0] or 0.0
-
             total_pnl = pos_data[1] or 0.0
-
             db.close()
 
-            # Отправить начальный баланс
-
             position_value = total_size * 45000 if total_size > 0 else 0.0
-
             total_balance = 10000.0
 
-            await websocket.send_json(
+            balance_payload = {
+                "total_balance": total_balance,
+                "available_balance": max(total_balance - position_value, 0),
+                "position_value": position_value,
+                "unrealized_pnl": float(total_pnl or 0.0),
+                "currency": "USDT",
+                "margin_balance": position_value,
+                "source": "local",
+            }
 
-                {
+        await websocket.send_json({"type": "initial_balance", "balance": balance_payload})
 
-                    "type": "initial_balance",
+        # --- STATUS: исправить баг с testnet (or True всегда даёт True) ---
+        symbols = config.get("trading.symbols") or [config.get("trading.symbol") or "BTCUSDT"]
+        testnet = bool(config.get("trading.testnet", True))
 
-                    "balance": {
+        await websocket.send_json(
+            {
+                "type": "initial_status",
+                "status": {
+                    "account_id": "123456789",
+                    "account_status": "normal",
+                    "account_type": "Unified Trading Account",
+                    "margin_status": "Regular Margin",
+                    "mode": config.get("trading.mode") or "paper",
+                    "symbol": symbols[0],      # для совместимости с UI
+                    "symbols": symbols,        # чтобы UI мог показать список
+                    "testnet": testnet,
+                },
+            }
+        )
 
-                        "total_balance": total_balance,
+    except Exception as e:
+        logger.error(f"Failed to send initial data: {e}", exc_info=True)
 
-                        "available_balance": max(total_balance - position_value, 0),
-
-                        "position_value": position_value,
-
-                        "unrealized_pnl": total_pnl,
-
-                        "currency": "USDT",
-
-                        "margin_balance": position_value,
-
-                    },
-
-                }
-
-            )
-
-            # Отправить начальный статус
-
-            await websocket.send_json(
-
-                {
-
-                    "type": "initial_status",
-
-                    "status": {
-
-                        "account_id": "123456789",
-
-                        "account_status": "normal",
-
-                        "account_type": "Unified Trading Account",
-
-                        "margin_status": "Regular Margin",
-
-                        "mode": config.get("trading.mode") or "paper",
-
-                        "symbol": config.get("trading.symbol") or "BTCUSDT",
-
-                    },
-
-                }
-
-            )
-
-        except Exception as e:
-
-            logger.error(f"Failed to send initial data: {e}")
-
+    # Периодический пуш баланса и позиций
+    push_every = 3.0  # 2-5 сек по задаче
+    last_push = 0.0
+    try:
         while True:
+            now = time.time()
 
-            data = await websocket.receive_text()
+            # периодический пуш аккаунта
+            if now - last_push >= push_every:
+                try:
+                    cfg = get_config()
+                    testnet = bool(cfg.get("trading.testnet", True))
+                    symbols = cfg.get("trading.symbols", None) or [cfg.get("trading.symbol", "BTCUSDT")]
+
+                    balance, positions = await asyncio.to_thread(_fetch_account_snapshot_sync, testnet, symbols)
+
+                    await websocket.send_json({"type": "account_balance_updated", "balance": balance})
+                    await websocket.send_json({"type": "positions_updated", "positions": positions})
+                except Exception as e:
+                    # не валим WS, просто логируем (часто тут будет отсутствие ключей в paper-режиме)
+                    logger.debug(f"WS periodic account snapshot failed: {e}")
+
+                last_push = now
+
+            # команды от клиента — без вечной блокировки
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
 
             message = json.loads(data)
 
-            # Обработка команд от клиента
-
             if message.get("type") == "ping":
-
                 await websocket.send_json({"type": "pong"})
-
             elif message.get("type") == "subscribe":
-
                 channel = message.get("channel")
-
-                await websocket.send_json(
-
-                    {
-
-                        "type": "subscribed",
-
-                        "channel": channel,
-
-                    }
-
-                )
-
+                await websocket.send_json({"type": "subscribed", "channel": channel})
             else:
-
                 logger.warning(f"Unknown message type: {message.get('type')}")
 
     except Exception as e:
-
         logger.error(f"WebSocket error: {e}")
-
     finally:
-
         connected_clients.discard(websocket)
-
         logger.info(f"WebSocket client disconnected. Total: {len(connected_clients)}")
 
 

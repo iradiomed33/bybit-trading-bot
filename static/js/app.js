@@ -413,6 +413,29 @@ function handleWebSocketMessage(data) {
             // Обновить статус при подключении
             updateAccountInfo(data.status);
             break;
+        case 'account_balance_updated': {
+            // Realtime обновление баланса
+            const b = data.balance || {};
+            updateBalanceInfo(b);
+            const total = parseFloat(b.total_balance || 0).toFixed(2);
+            const upnl = parseFloat(b.unrealized_pnl || 0).toFixed(2);
+            if (document.getElementById('totalBalance')) {
+                document.getElementById('totalBalance').textContent = '$' + total;
+            }
+            if (document.getElementById('unrealizedPnl')) {
+                document.getElementById('unrealizedPnl').textContent = '$' + upnl;
+            }
+            break;
+        }
+        case 'positions_updated': {
+            // Realtime обновление позиций
+            const positions = data.positions || [];
+            if (document.getElementById('positionCount')) {
+                document.getElementById('positionCount').textContent = (positions.length || 0).toString();
+            }
+            updatePositionsTable(positions);
+            break;
+        }
         case 'bot_status_changed':
             // Обновить статус бота
             botIsRunning = data.is_running;
@@ -420,10 +443,8 @@ function handleWebSocketMessage(data) {
             showBotStatusMessage(data.message, data.is_running ? 'success' : 'warning');
             break;
         case 'config_updated':
-            config = data.config;
-            if (config) {
-                updateDashboardFromConfig();
-            }
+            if (data.config) config = data.config;
+            updateDashboardFromConfig();
             break;
         case 'trade_executed':
             showNotification(`Сделка исполнена: ${data.trade.symbol}`, 'success');
@@ -606,6 +627,11 @@ async function saveSettings() {
         showNotification(`Настройки сохранены! Пары: ${symbols.join(', ')}`, 'success');
         config = await apiCall('/config');
         updateDashboardFromConfig();
+        
+        // Уведомление о перезапуске если бот работает
+        if (botIsRunning) {
+            showNotification('⚠️ Настройки применятся после перезапуска бота', 'warning');
+        }
     }
 }
 

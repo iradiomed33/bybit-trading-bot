@@ -149,6 +149,14 @@ class TradingBot:
 
             rest_client = BybitRestClient(testnet=testnet)
 
+            # Устанавливаем leverage из конфига
+            try:
+                lev = str(int(float(self.config.get("risk_management.max_leverage", 10))))
+                self.account_client.set_leverage(category="linear", symbol=self.symbol, buy_leverage=lev, sell_leverage=lev)
+                logger.info(f"[CONFIG] set_leverage applied: {self.symbol} -> {lev}x")
+            except Exception as e:
+                logger.warning(f"[CONFIG] set_leverage failed for {self.symbol}: {e}")
+
         # Инициализируем менеджер инструментов для нормализации ордеров
 
         if mode == "live":
@@ -360,6 +368,8 @@ class TradingBot:
                 use_percent_fallback=True,
 
                 percent_fallback=Decimal(str(self.config.get("risk_management.percent_fallback", 5.0))),
+
+                max_leverage=Decimal(str(self.config.get("risk_management.max_leverage", 10.0))),
 
             )
 
