@@ -296,6 +296,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateTime();
         setInterval(updateTime, 1000);
         
+        // Инициализировать Bootstrap tooltips
+        console.log('[DOMContentLoaded] Initializing tooltips...');
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        
         console.log('[DOMContentLoaded] Initialization complete!');
     } catch (error) {
         console.error('[DOMContentLoaded] Fatal error during initialization:', error);

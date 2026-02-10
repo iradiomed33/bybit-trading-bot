@@ -199,14 +199,19 @@
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label">Торговые Пары</label>
+                                        <label class="form-label">
+                                            Торговые Пары
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Список торговых пар для мониторинга. Бот будет анализировать эти пары и искать сигналы на вход"></i>
+                                        </label>
                                         <input type="text" class="form-control" id="settingSymbols" 
-                                               placeholder="BTCUSDT, ETHUSDT, SOLUSDT" 
-                                               title="Введи пары через запятую">
+                                               placeholder="BTCUSDT, ETHUSDT, SOLUSDT">
                                         <small class="form-text text-muted">Пары разделяй запятой и пробелом</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Таймфрейм (минут)</label>
+                                        <label class="form-label">
+                                            Таймфрейм (минут)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Временной интервал свечей для анализа. Меньший таймфрейм = больше сигналов, но выше шум"></i>
+                                        </label>
                                         <select class="form-select" id="settingTimeframe">
                                             <option value="1">1 мин</option>
                                             <option value="5">5 мин</option>
@@ -217,7 +222,10 @@
                                         </select>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Режим</label>
+                                        <label class="form-label">
+                                            Режим
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Paper - виртуальная торговля без реальных денег. Live - real trading с реальными средствами"></i>
+                                        </label>
                                         <select class="form-select" id="settingMode">
                                             <option value="paper">Paper</option>
                                             <option value="live">Live</option>
@@ -234,17 +242,24 @@
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label">Макс. одновременных позиций</label>
+                                        <label class="form-label">
+                                            Макс. одновременных позиций
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимальное количество открытых позиций одновременно. Лимитирует риск портфеля и распределяет капитал"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingMaxPositions" min="1" max="10" step="1" value="3">
-                                        <small class="form-text text-muted">Максимальное количество открытых позиций</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Макс. общая экспозиция (USDT)</label>
+                                        <label class="form-label">
+                                            Макс. общая экспозиция (USDT)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимальная общая стоимость всех позиций. Общий нотионал = сумма (цена × размер × плечо) по всем позициям"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingMaxTotalNotional" min="1000" max="1000000" step="1000" value="100000">
-                                        <small class="form-text text-muted">Общий нотионал на все позиции</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Риск-профиль</label>
+                                        <label class="form-label">
+                                            Риск-профиль
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Предустановленный набор порогов риска. Conservative = минимальный риск, Aggressive = максимальная агрессивность"></i>
+                                        </label>
                                         <select class="form-select" id="settingRiskProfile">
                                             <option value="Conservative">Conservative</option>
                                             <option value="Balanced" selected>Balanced</option>
@@ -265,14 +280,20 @@
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label">Тип ордера</label>
+                                        <label class="form-label">
+                                            Тип ордера
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Market = мгновенное исполнение по текущей цене. Limit = ордер по заданной цене с ожиданием исполнения"></i>
+                                        </label>
                                         <select class="form-select" id="settingOrderType">
                                             <option value="market">Market</option>
                                             <option value="limit" selected>Limit</option>
                                         </select>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Time in Force</label>
+                                        <label class="form-label">
+                                            Time in Force
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="GTC = ордер активен пока не исполнен или отменен. IOC = исполнить немедленно или отменить. FOK = исполнить полностью или отменить"></i>
+                                        </label>
                                         <select class="form-select" id="settingTimeInForce">
                                             <option value="GTC" selected>GTC (Good Till Cancel)</option>
                                             <option value="IOC">IOC (Immediate or Cancel)</option>
@@ -283,6 +304,7 @@
                                         <input type="checkbox" class="form-check-input" id="settingPostOnly">
                                         <label class="form-check-label" for="settingPostOnly">
                                             Post-only (только мейкер)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Ордер будет добавлен в стакан как maker (получаешь rebate). Если исполнится как taker, будет отменен"></i>
                                         </label>
                                     </div>
                                 </div>
@@ -296,17 +318,26 @@
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label">Лимит дневных потерь (%)</label>
+                                        <label class="form-label">
+                                            Лимит дневных потерь (%)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимально допустимые убытки за день в % от баланса. При превышении бот автоматически остановится"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingDailyLossLimit" min="0.5" max="20" step="0.5" value="5.0">
                                         <small class="form-text text-muted">Процент от баланса</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Макс. подряд ошибок</label>
+                                        <label class="form-label">
+                                            Макс. подряд ошибок
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="После стольких последовательных ошибок бот уходит в cooldown. Защита от технических проблем или API сбоев"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingMaxConsecErrors" min="1" max="20" step="1" value="5">
                                         <small class="form-text text-muted">После этого бот уходит в cooldown</small>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Cooldown (минут)</label>
+                                        <label class="form-label">
+                                            Cooldown (минут)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Время паузы после превышения лимита ошибок. Бот не будет торговать, но продолжит мониторинг"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingCooldownMinutes" min="1" max="120" step="1" value="15">
                                         <small class="form-text text-muted">Время паузы после макс. ошибок</small>
                                     </div>
@@ -331,19 +362,28 @@
                                             <div class="col-md-6">
                                                 <h6 class="mb-3">Детекция режимов рынка</h6>
                                                 <div class="mb-3">
-                                                    <label class="form-label">High Vol Event ATR (%)</label>
+                                                    <label class="form-label">
+                                                        High Vol Event ATR (%)
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Порог ATR в % от цены для определения режима высокой волатильности. При высокой волатильности условия входа ужесточаются"></i>
+                                                    </label>
                                                     <input type="number" class="form-control advanced-input" id="settingHighVolEventAtr" min="1" max="20" step="0.5" value="7.0">
                                                     <small class="form-text text-muted">Порог ATR% для режима высокой волатильности</small>
                                                 </div>
                                                 
                                                 <h6 class="mb-3 mt-4">No-Trade Zones</h6>
                                                 <div class="mb-3">
-                                                    <label class="form-label">Max ATR (%)</label>
+                                                    <label class="form-label">
+                                                        Max ATR (%)
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимальный допустимый ATR в % от цены. Выше этого значения торговля блокируется из-за экстремальной волатильности"></i>
+                                                    </label>
                                                     <input type="number" class="form-control advanced-input" id="settingNoTradeMaxAtr" min="5" max="30" step="1" value="14.0">
                                                     <small class="form-text text-muted">Максимальный ATR% для торговли</small>
                                                 </div>
                                                 <div class="mb-3">
-                                                    <label class="form-label">Max Spread (%)</label>
+                                                    <label class="form-label">
+                                                        Max Spread (%)
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимальный допустимый спред между bid и ask в % от цены. Широкий спред = плохая ликвидность и высокие издержки входа"></i>
+                                                    </label>
                                                     <input type="number" class="form-control advanced-input" id="settingNoTradeMaxSpread" min="0.1" max="5" step="0.1" value="0.5">
                                                     <small class="form-text text-muted">Максимальный спред для торговли</small>
                                                 </div>
@@ -352,7 +392,10 @@
                                             <div class="col-md-6">
                                                 <h6 class="mb-3">Качество данных</h6>
                                                 <div class="mb-3">
-                                                    <label class="form-label">Orderbook Sanity Check (%)</label>
+                                                    <label class="form-label">
+                                                        Orderbook Sanity Check (%)
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимальное отклонение bid/ask от цены свечи в %. Защита от сбоев в стакане и аномальных цен. На testnet рекомендуется 5-10%"></i>
+                                                    </label>
                                                     <input type="number" class="form-control advanced-input" id="settingOrderbookSanity" min="1" max="10" step="0.5" value="3.0">
                                                     <small class="form-text text-muted">Макс. отклонение стакана от цены свечи</small>
                                                 </div>
@@ -362,10 +405,14 @@
                                                     <input type="checkbox" class="form-check-input advanced-input" id="settingUseMTF">
                                                     <label class="form-check-label" for="settingUseMTF">
                                                         Использовать MTF Confluence
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Multi-Timeframe анализ проверяет совпадение сигналов на разных таймфреймах. Повышает качество сигналов, но снижает их частоту"></i>
                                                     </label>
                                                 </div>
                                                 <div class="mb-3">
-                                                    <label class="form-label">MTF Score Threshold</label>
+                                                    <label class="form-label">
+                                                        MTF Score Threshold
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Минимальный MTF-скор для входа (0..1). Чем выше значение, тем строже фильтрация сигналов. 0.65 = хороший баланс качества/частоты"></i>
+                                                    </label>
                                                     <input type="number" class="form-control advanced-input" id="settingMtfScoreThreshold" min="0.1" max="1" step="0.05" value="0.65">
                                                     <small class="form-text text-muted">Порог MTF-скоринга (0..1)</small>
                                                 </div>
@@ -397,11 +444,17 @@
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label">Stop Loss (%)</label>
+                                        <label class="form-label">
+                                            Stop Loss (%)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимальный убыток по позиции в % от входа. Стоп-лосс размещается автоматически при входе в позицию"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingStopLoss" min="0.1" max="10" step="0.1">
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label">Take Profit (%)</label>
+                                        <label class="form-label">
+                                            Take Profit (%)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Целевой профит в % от входа. Тейк-профит размещается автоматически для фиксации прибыли по достижении цели"></i>
+                                        </label>
                                         <input type="number" class="form-control" id="settingTakeProfit" min="0.1" max="50" step="0.1">
                                     </div>
                                 </div>
