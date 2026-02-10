@@ -1109,40 +1109,81 @@ function displaySignalLogs(data) {
     let html = '';
     
     data.data.forEach(log => {
-        let rowClass = 'text-light';
-        let icon = '📝';
-        
-        // Определяем цвет в зависимости от типа сообщения
         const message = log.message || log.raw || 'Unknown log';
+        const timestamp = log.timestamp || 'N/A';
+        const logType = log.type || 'unknown';
         
-        if (message.includes('ACCEPTED') || message.includes('✅')) {
-            rowClass = 'text-success';
-            icon = '✅';
-        } else if (message.includes('REJECTED') || message.includes('❌')) {
-            rowClass = 'text-danger';
-            icon = '❌';
-        } else if (message.includes('WARNING') || message.includes('⏳')) {
-            rowClass = 'text-warning';
-            icon = '⏳';
-        } else if (message.includes('DEBUG') || message.includes('🔍')) {
-            rowClass = 'text-muted';
-            icon = '🔍';
-        } else if (message.includes('SIGNAL') || message.includes('📊')) {
-            rowClass = 'text-info';
-            icon = '📊';
+        let icon = '📝';
+        let title = 'UNKNOWN';
+        let subtitle = '';
+        let rowClass = 'text-light';
+        let borderColor = 'secondary';
+        
+        // Определяем тип и форматирование
+        switch(logType) {
+            case 'generated':
+                icon = '✅';
+                title = 'SIGNAL GENERATED';
+                subtitle = 'Стратегия создала сигнал';
+                rowClass = 'text-success';
+                borderColor = 'success';
+                break;
+            case 'accepted':
+                icon = '✅';
+                title = 'SIGNAL ACCEPTED';
+                subtitle = 'Сигнал прошел все проверки и ордер открыт';
+                rowClass = 'text-success';
+                borderColor = 'success';
+                break;
+            case 'rejected':
+                icon = '❌';
+                title = 'SIGNAL REJECTED';
+                subtitle = 'Сигнал отклонен (причина в логе)';
+                rowClass = 'text-danger';
+                borderColor = 'danger';
+                break;
+            case 'exec_failed':
+                icon = '❌';
+                title = 'ORDER EXEC FAILED';
+                subtitle = 'Ордер не выполнен (причина в логе)';
+                rowClass = 'text-danger';
+                borderColor = 'danger';
+                break;
         }
         
-        // Парсим сообщение для лучшего отображения
-        const timestamp = log.timestamp || 'N/A';
+        // Извлекаем важные поля из сообщения
+        const symbolMatch = message.match(/Symbol=([A-Z]+)/);
+        const directionMatch = message.match(/Direction=([A-Z]+)/);
+        const strategyMatch = message.match(/Strategy=([^|]+)/);
+        const reasonMatch = message.match(/Reasons=(\[[^\]]*\])/);
         
-        // Разбиваем на части по |
-        const parts = message.split('|').map(p => p.trim()).filter(p => p);
+        const symbol = symbolMatch ? symbolMatch[1] : '';
+        const direction = directionMatch ? directionMatch[1] : '';
+        const strategy = strategyMatch ? strategyMatch[1].trim() : '';
+        let reasons = '';
+        
+        if (reasonMatch) {
+            try {
+                const reasonsArray = JSON.parse(reasonMatch[1]);
+                reasons = reasonsArray.join(', ');
+            } catch {
+                reasons = reasonMatch[1];
+            }
+        }
         
         html += `
-            <div class="log-entry ${rowClass} border-start border-3 ps-3 mb-2 py-2 font-monospace small">
-                <div style="color: #888;">${timestamp}</div>
-                <div><strong>${parts[0]}</strong></div>
-                ${parts.slice(1).map(p => `<div style="color: #ccc; margin-left: 10px;">• ${p}</div>`).join('')}
+            <div class="log-entry ${rowClass} border-start border-${borderColor} border-3 ps-3 mb-3 py-2 bg-dark rounded">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <div>
+                        <strong>${icon} ${title}</strong>
+                        <div class="small text-muted">${subtitle}</div>
+                    </div>
+                    <small class="text-muted">${timestamp}</small>
+                </div>
+                ${symbol ? `<div class="small"><strong>Symbol:</strong> ${symbol}</div>` : ''}
+                ${direction ? `<div class="small"><strong>Direction:</strong> ${direction}</div>` : ''}
+                ${strategy ? `<div class="small"><strong>Strategy:</strong> ${strategy}</div>` : ''}
+                ${reasons ? `<div class="small text-warning"><strong>Reason:</strong> ${reasons}</div>` : ''}
             </div>
         `;
     });
@@ -1178,43 +1219,88 @@ function addLiveLog(logData) {
     const container = document.getElementById('signalLogsContainer');
     if (!container) return;
     
-    // Парсим сообщение для определения типа
     const message = logData.message || 'Unknown log';
-    const level = logData.level || 'INFO';
     const timestamp = logData.timestamp ? new Date(logData.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
     
-    // Определяем цвет в зависимости от типа сообщения
-    let rowClass = 'text-light';
-    let icon = '📝';
+    // Фильтруем только ВАЖНЫЕ логи
+    const isImportant = 
+        message.includes('Stage=GENERATED') ||
+        message.includes('Stage=ACCEPTED') ||
+        message.includes('Stage=REJECTED') ||
+        message.includes('ORDER EXEC FAILED');
     
-    if (message.includes('✅') || level === 'SUCCESS') {
-        rowClass = 'text-success';
-        icon = '✅';
-    } else if (message.includes('❌') || message.includes('ERROR') || message.includes('Exception') || level.includes('ERROR')) {
-        rowClass = 'text-danger';
-        icon = '❌';
-    } else if (message.includes('⏳') || message.includes('WARN') || level.includes('WARNING')) {
-        rowClass = 'text-warning';
-        icon = '⏳';
-    } else if (message.includes('🔍') || message.includes('signal') || message.includes('Signal')) {
-        rowClass = 'text-info';
-        icon = '🔍';
-    } else if (message.includes('📊') || message.includes('position') || message.includes('Position')) {
-        rowClass = 'text-secondary';
-        icon = '📊';
-    } else if (level === 'DEBUG') {
-        rowClass = 'text-muted';
+    if (!isImportant) {
+        console.debug('[addLiveLog] Skipping non-important log:', message);
+        return;
     }
     
-    // Разбиваем на части по |
-    const parts = message.split('|').map(p => p.trim()).filter(p => p);
+    // Определяем тип лога
+    let icon = '📝';
+    let title = 'UNKNOWN';
+    let subtitle = '';
+    let rowClass = 'text-light';
+    let borderColor = 'secondary';
+    
+    if (message.includes('Stage=GENERATED')) {
+        icon = '✅';
+        title = 'SIGNAL GENERATED';
+        subtitle = 'Стратегия создала сигнал';
+        rowClass = 'text-success';
+        borderColor = 'success';
+    } else if (message.includes('Stage=ACCEPTED')) {
+        icon = '✅';
+        title = 'SIGNAL ACCEPTED';
+        subtitle = 'Сигнал прошел все проверки и ордер открыт';
+        rowClass = 'text-success';
+        borderColor = 'success';
+    } else if (message.includes('Stage=REJECTED')) {
+        icon = '❌';
+        title = 'SIGNAL REJECTED';
+        subtitle = 'Сигнал отклонен (причина в логе)';
+        rowClass = 'text-danger';
+        borderColor = 'danger';
+    } else if (message.includes('ORDER EXEC FAILED')) {
+        icon = '❌';
+        title = 'ORDER EXEC FAILED';
+        subtitle = 'Ордер не выполнен (причина в логе)';
+        rowClass = 'text-danger';
+        borderColor = 'danger';
+    }
+    
+    // Извлекаем важные поля из сообщения
+    const symbolMatch = message.match(/Symbol=([A-Z]+)/);
+    const directionMatch = message.match(/Direction=([A-Z]+)/);
+    const strategyMatch = message.match(/Strategy=([^|]+)/);
+    const reasonMatch = message.match(/Reasons=(\[[^\]]*\])/);
+    
+    const symbol = symbolMatch ? symbolMatch[1] : '';
+    const direction = directionMatch ? directionMatch[1] : '';
+    const strategy = strategyMatch ? strategyMatch[1].trim() : '';
+    let reasons = '';
+    
+    if (reasonMatch) {
+        try {
+            const reasonsArray = JSON.parse(reasonMatch[1]);
+            reasons = reasonsArray.join(', ');
+        } catch {
+            reasons = reasonMatch[1];
+        }
+    }
     
     const logEntry = document.createElement('div');
-    logEntry.className = `log-entry ${rowClass} border-start border-3 ps-3 mb-2 py-2 font-monospace small fade-in`;
+    logEntry.className = `log-entry ${rowClass} border-start border-${borderColor} border-3 ps-3 mb-3 py-2 bg-dark rounded fade-in`;
     logEntry.innerHTML = `
-        <div style="color: #888;">${timestamp}</div>
-        <div><strong>${parts[0] || level}</strong></div>
-        ${parts.slice(1).map(p => `<div style="color: #ccc; margin-left: 10px;">• ${p}</div>`).join('')}
+        <div class="d-flex justify-content-between align-items-start mb-1">
+            <div>
+                <strong>${icon} ${title}</strong>
+                <div class="small text-muted">${subtitle}</div>
+            </div>
+            <small class="text-muted">${timestamp}</small>
+        </div>
+        ${symbol ? `<div class="small"><strong>Symbol:</strong> ${symbol}</div>` : ''}
+        ${direction ? `<div class="small"><strong>Direction:</strong> ${direction}</div>` : ''}
+        ${strategy ? `<div class="small"><strong>Strategy:</strong> ${strategy}</div>` : ''}
+        ${reasons ? `<div class="small text-warning"><strong>Reason:</strong> ${reasons}</div>` : ''}
     `;
     
     // Добавляем новый лог в начало контейнера
@@ -1225,7 +1311,7 @@ function addLiveLog(logData) {
         container.appendChild(logEntry);
     }
     
-    // Ограничиваем количество отображаемых логов до 50 (чтобыне заполнять память)
+    // Ограничиваем количество отображаемых логов до 50 (чтобы не заполнять память)
     const logEntries = container.querySelectorAll('.log-entry');
     if (logEntries.length > 50) {
         for (let i = logEntries.length - 1; i >= 50; i--) {

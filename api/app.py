@@ -824,7 +824,8 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
     Получить логи сигналов для отладки.
 
-    Если логов сегодня нет, загружает из предыдущих дней.
+    Показывает только важные логи: SIGNAL GENERATED/ACCEPTED/REJECTED, ORDER EXEC FAILED.
+    Приоритетно показывает сегодняшние логи.
 
 
     Args:
@@ -841,28 +842,32 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
         log_dir = Path("logs")
         
-        # Попытаемся найти самый свежий файл логов сигналов
-        log_files = sorted(
-            log_dir.glob("signals_*.log"),
-            key=lambda p: p.stem,  # Сортируем по имени (дата в имени)
-            reverse=True
-        )
+        # Сначала пытаемся взять СЕГОДНЯШНИЙ файл
+        from datetime import datetime
+        today_log = log_dir / f"signals_{datetime.now().strftime('%Y-%m-%d')}.log"
         
-        # Берем последний файл или текущий день
-        log_file = log_dir / f"signals_{datetime.now().strftime('%Y-%m-%d')}.log"
+        # Если сегодняшнего нет или он пустой, ищем предыдущие
+        log_files = []
+        if today_log.exists() and today_log.stat().st_size > 0:
+            log_files = [today_log]
+        else:
+            # Ищем предыдущие непустые файлы
+            log_files = [
+                f for f in log_dir.glob("signals_*.log")
+                if f.stat().st_size > 0
+            ]
+            log_files = sorted(log_files, key=lambda p: p.stem, reverse=True)
         
-        # Если текущий файл пуст или не существует, ищем из предыдущих дней
-        if not log_file.exists() or log_file.stat().st_size == 0:
-            if log_files:
-                log_file = log_files[0]  # Берем самый свежий из доступных
-            else:
-                return {
-                    "status": "success",
-                    "data": [],
-                    "file": str(log_file),
-                    "count": 0,
-                    "message": "No signal logs available",
-                }
+        if not log_files:
+            return {
+                "status": "success",
+                "data": [],
+                "file": "No signal logs available",
+                "count": 0,
+                "message": "No signal logs available",
+            }
+
+        log_file = log_files[0]
 
         # Читаем файл в обратном порядке (новые логи первыми)
 
@@ -870,19 +875,32 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
             all_lines = f.readlines()
 
-        # Фильтруем по уровню если нужно
+        # Фильтруем только ВАЖНЫЕ логи
 
         filtered_lines = []
 
         for line in reversed(all_lines):
+            # Пропускаем пустые строки
+            if not line.strip():
+                continue
+                
+            # Фильтр по типу: показываем только важные сигналы
+            is_important = any([
+                "Stage=GENERATED" in line,
+                "Stage=ACCEPTED" in line,
+                "Stage=REJECTED" in line,
+                "ORDER EXEC FAILED" in line,
+            ])
+            
+            if not is_important:
+                continue
+            
+            # Дополнительный фильтр по level (если указан)
+            if level != "all":
+                if level.upper() not in line:
+                    continue
 
-            if level == "all":
-
-                filtered_lines.append(line.strip())
-
-            elif level.upper() in line:
-
-                filtered_lines.append(line.strip())
+            filtered_lines.append(line.strip())
 
             if len(filtered_lines) >= limit:
 
@@ -905,6 +923,17 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
                     log_level = parts[1].strip()
 
                     message = " | ".join(parts[2:])
+                    
+                    # Определяем тип лога для красивого отображения
+                    log_type = "unknown"
+                    if "Stage=GENERATED" in message:
+                        log_type = "generated"
+                    elif "Stage=ACCEPTED" in message:
+                        log_type = "accepted"
+                    elif "Stage=REJECTED" in message:
+                        log_type = "rejected"
+                    elif "ORDER EXEC FAILED" in message:
+                        log_type = "exec_failed"
 
                     logs.append(
 
@@ -915,6 +944,8 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
                             "level": log_level,
 
                             "message": message,
+
+                            "type": log_type,
 
                             "raw": line,
 

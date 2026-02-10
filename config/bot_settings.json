@@ -1,6 +1,6 @@
 {
   "trading": {
-    "symbol": "BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT",
+    "symbol": "BTCUSDT",
     "symbols": [
       "BTCUSDT",
       "ETHUSDT",
@@ -20,7 +20,7 @@
     "kline_limit": 500,
     "orderbook_depth": 50,
     "data_refresh_interval": 12,
-    "orderbook_sanity_max_deviation_pct": 3.0,
+    "orderbook_sanity_max_deviation_pct": 3,
     "derivatives": {
       "fetch_mark_price": true,
       "fetch_index_price": true,
@@ -35,7 +35,7 @@
     "max_notional": 50000.0,
     "stop_loss_percent": 5,
     "take_profit_percent": 10,
-    "daily_loss_limit_percent": 5.0,
+    "daily_loss_limit_percent": 5,
     "max_drawdown_percent": 10.0,
     "max_position_notional": 50000.0,
     "max_orders_per_symbol": 10,
@@ -60,7 +60,7 @@
     "monitor_interval_seconds": 30,
     "enable_auto_kill_switch": true,
     "max_positions": 3,
-    "max_total_notional": 100000.0
+    "max_total_notional": 100000
   },
   "paper_trading": {
     "initial_balance": 10000,
@@ -91,7 +91,7 @@
     }
   },
   "meta_layer": {
-    "use_mtf": false,
+    "use_mtf": true,
     "mtf_timeframes": [
       "1m",
       "5m",
@@ -105,18 +105,18 @@
     "volatility_threshold": 0.02,
     "no_trade_hours": [],
     "risk_profile": "Balanced",
-    "high_vol_event_atr_pct": 7.0
+    "high_vol_event_atr_pct": 7
   },
   "no_trade_zone": {
-    "max_atr_pct": 14.0,
-    "max_spread_pct": 0.50
+    "max_atr_pct": 14,
+    "max_spread_pct": 0.5
   },
   "kill_switch": {
     "max_consecutive_errors": 5,
     "cooldown_minutes": 15
   },
   "execution": {
-    "order_type": "limit",
+    "order_type": "market",
     "time_in_force": "GTC",
     "post_only": false,
     "use_breakeven": false,
