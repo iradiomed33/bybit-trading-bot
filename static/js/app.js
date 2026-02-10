@@ -496,6 +496,10 @@ function handleWebSocketMessage(data) {
         case 'position_updated':
             loadAccountInfo();
             break;
+        case 'log':
+            // Добавить WebSocket лог в контейнер в реальном времени
+            addLiveLog(data);
+            break;
         default:
             console.log('Unknown message type:', data.type);
     }
@@ -562,6 +566,17 @@ async function loadInitialData() {
         console.log('[loadInitialData] Loading account info...');
         await loadAccountInfo();
         console.log('[loadInitialData] Account info loaded');
+        
+        // Load signal logs
+        console.log('[loadInitialData] Loading signal logs...');
+        await loadSignalLogs();
+        console.log('[loadInitialData] Signal logs loaded');
+        
+        // Start auto-reload of signal logs every 5 seconds
+        setInterval(() => {
+            loadSignalLogs().catch(err => console.debug('[autoReload] Signal logs error:', err));
+        }, 5000);
+        
     } catch (error) {
         console.error('[loadInitialData] Error:', error);
     }
@@ -1043,8 +1058,14 @@ setInterval(() => {
  */
 async function loadSignalLogs() {
     try {
-        const limit = parseInt(document.getElementById('signalLogLimit').value) || 50;
-        const level = document.getElementById('signalLogLevel').value || 'all';
+        // Получить значения или использовать defaults
+        const limitEl = document.getElementById('signalLogLimit');
+        const levelEl = document.getElementById('signalLogLevel');
+        
+        const limit = limitEl ? (parseInt(limitEl.value) || 50) : 50;
+        const level = levelEl ? (levelEl.value || 'all') : 'all';
+        
+        console.log('[loadSignalLogs] Loading logs with limit:', limit, 'level:', level);
         
         const response = await fetch(`${API_BASE}/signals/logs?limit=${limit}&level=${level}`, {
             headers: {
@@ -1057,6 +1078,7 @@ async function loadSignalLogs() {
         }
         
         const data = await response.json();
+        console.log('[loadSignalLogs] Received logs:', data.data?.length || 0, 'items');
         displaySignalLogs(data);
     } catch (error) {
         console.error('[SIGNALS] Error loading logs:', error);
@@ -1071,8 +1093,16 @@ async function loadSignalLogs() {
 function displaySignalLogs(data) {
     const container = document.getElementById('signalLogsContainer');
     
+    // Если контейнера нет, это нормально (может быть на другой вкладке)
+    if (!container) {
+        console.debug('[displaySignalLogs] Container not found, ignoring display');
+        return;
+    }
+    
     if (!data.data || data.data.length === 0) {
         container.innerHTML = '<p class="text-muted">Нет логов</p>';
+        const countEl = document.getElementById('signalLogCount');
+        if (countEl) countEl.textContent = '0 логов';
         return;
     }
     
@@ -1083,25 +1113,26 @@ function displaySignalLogs(data) {
         let icon = '📝';
         
         // Определяем цвет в зависимости от типа сообщения
-        if (log.message.includes('✅')) {
+        const message = log.message || log.raw || 'Unknown log';
+        
+        if (message.includes('ACCEPTED') || message.includes('✅')) {
             rowClass = 'text-success';
             icon = '✅';
-        } else if (log.message.includes('❌')) {
+        } else if (message.includes('REJECTED') || message.includes('❌')) {
             rowClass = 'text-danger';
             icon = '❌';
-        } else if (log.message.includes('⏳')) {
+        } else if (message.includes('WARNING') || message.includes('⏳')) {
             rowClass = 'text-warning';
             icon = '⏳';
-        } else if (log.message.includes('🔍')) {
-            rowClass = 'text-info';
+        } else if (message.includes('DEBUG') || message.includes('🔍')) {
+            rowClass = 'text-muted';
             icon = '🔍';
-        } else if (log.message.includes('📊')) {
-            rowClass = 'text-secondary';
+        } else if (message.includes('SIGNAL') || message.includes('📊')) {
+            rowClass = 'text-info';
             icon = '📊';
         }
         
         // Парсим сообщение для лучшего отображения
-        const message = log.message || log.raw || 'Unknown log';
         const timestamp = log.timestamp || 'N/A';
         
         // Разбиваем на части по |
@@ -1117,7 +1148,11 @@ function displaySignalLogs(data) {
     });
     
     container.innerHTML = html;
-    document.getElementById('signalLogCount').textContent = `${data.data.length} логов`;
+    
+    const countEl = document.getElementById('signalLogCount');
+    if (countEl) countEl.textContent = `${data.data.length} логов`;
+    
+    console.log('[displaySignalLogs] Displayed', data.data.length, 'logs');
 }
 
 /**
@@ -1125,8 +1160,84 @@ function displaySignalLogs(data) {
  */
 function clearSignalLogs() {
     if (confirm('Вы уверены? Это не удалит файл, только очистит представление.')) {
-        document.getElementById('signalLogsContainer').innerHTML = '';
-        document.getElementById('signalLogCount').textContent = '0 логов';
+        const container = document.getElementById('signalLogsContainer');
+        if (container) {
+            container.innerHTML = '';
+        }
+        const countEl = document.getElementById('signalLogCount');
+        if (countEl) {
+            countEl.textContent = '0 логов';
+        }
+    }
+}
+
+/**
+ * Добавить лог в контейнер в реальном времени (из WebSocket)
+ */
+function addLiveLog(logData) {
+    const container = document.getElementById('signalLogsContainer');
+    if (!container) return;
+    
+    // Парсим сообщение для определения типа
+    const message = logData.message || 'Unknown log';
+    const level = logData.level || 'INFO';
+    const timestamp = logData.timestamp ? new Date(logData.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+    
+    // Определяем цвет в зависимости от типа сообщения
+    let rowClass = 'text-light';
+    let icon = '📝';
+    
+    if (message.includes('✅') || level === 'SUCCESS') {
+        rowClass = 'text-success';
+        icon = '✅';
+    } else if (message.includes('❌') || message.includes('ERROR') || message.includes('Exception') || level.includes('ERROR')) {
+        rowClass = 'text-danger';
+        icon = '❌';
+    } else if (message.includes('⏳') || message.includes('WARN') || level.includes('WARNING')) {
+        rowClass = 'text-warning';
+        icon = '⏳';
+    } else if (message.includes('🔍') || message.includes('signal') || message.includes('Signal')) {
+        rowClass = 'text-info';
+        icon = '🔍';
+    } else if (message.includes('📊') || message.includes('position') || message.includes('Position')) {
+        rowClass = 'text-secondary';
+        icon = '📊';
+    } else if (level === 'DEBUG') {
+        rowClass = 'text-muted';
+    }
+    
+    // Разбиваем на части по |
+    const parts = message.split('|').map(p => p.trim()).filter(p => p);
+    
+    const logEntry = document.createElement('div');
+    logEntry.className = `log-entry ${rowClass} border-start border-3 ps-3 mb-2 py-2 font-monospace small fade-in`;
+    logEntry.innerHTML = `
+        <div style="color: #888;">${timestamp}</div>
+        <div><strong>${parts[0] || level}</strong></div>
+        ${parts.slice(1).map(p => `<div style="color: #ccc; margin-left: 10px;">• ${p}</div>`).join('')}
+    `;
+    
+    // Добавляем новый лог в начало контейнера
+    const firstChild = container.firstChild;
+    if (firstChild) {
+        container.insertBefore(logEntry, firstChild);
+    } else {
+        container.appendChild(logEntry);
+    }
+    
+    // Ограничиваем количество отображаемых логов до 50 (чтобыне заполнять память)
+    const logEntries = container.querySelectorAll('.log-entry');
+    if (logEntries.length > 50) {
+        for (let i = logEntries.length - 1; i >= 50; i--) {
+            logEntries[i].remove();
+        }
+    }
+    
+    // Обновляем счетчик логов
+    const count = container.querySelectorAll('.log-entry').length;
+    const countEl = document.getElementById('signalLogCount');
+    if (countEl) {
+        countEl.textContent = `${count} логов`;
     }
 }
 

@@ -813,6 +813,8 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
     Получить логи сигналов для отладки.
 
+    Если логов сегодня нет, загружает из предыдущих дней.
+
 
     Args:
 
@@ -826,23 +828,30 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
 
         limit = min(limit, 500)  # Максимум 500
 
-        log_file = Path("logs") / f"signals_{datetime.now().strftime('%Y-%m-%d')}.log"
-
-        if not log_file.exists():
-
-            return {
-
-                "status": "success",
-
-                "data": [],
-
-                "file": str(log_file),
-
-                "count": 0,
-
-                "message": "No signal logs yet",
-
-            }
+        log_dir = Path("logs")
+        
+        # Попытаемся найти самый свежий файл логов сигналов
+        log_files = sorted(
+            log_dir.glob("signals_*.log"),
+            key=lambda p: p.stem,  # Сортируем по имени (дата в имени)
+            reverse=True
+        )
+        
+        # Берем последний файл или текущий день
+        log_file = log_dir / f"signals_{datetime.now().strftime('%Y-%m-%d')}.log"
+        
+        # Если текущий файл пуст или не существует, ищем из предыдущих дней
+        if not log_file.exists() or log_file.stat().st_size == 0:
+            if log_files:
+                log_file = log_files[0]  # Берем самый свежий из доступных
+            else:
+                return {
+                    "status": "success",
+                    "data": [],
+                    "file": str(log_file),
+                    "count": 0,
+                    "message": "No signal logs available",
+                }
 
         # Читаем файл в обратном порядке (новые логи первыми)
 
@@ -1221,6 +1230,27 @@ def _get_account_client_from_env():
     return client
 
 
+def _fetch_balance_snapshot_sync(testnet: bool = None):
+    """
+    Fetch только balance информацию из Bybit. Используется для инициализации WebSocket.
+    Требует ключи в окружении (BYBIT_API_KEY/BYBIT_API_SECRET).
+    Returns: balance_dict с total_balance, available_balance, position_value, unrealized_pnl и т.д.
+    """
+    if testnet is None:
+        cfg = get_config()
+        testnet = bool(cfg.get("trading.testnet", True))
+    
+    cfg = get_config()
+    symbols = cfg.get("trading.symbols") or [cfg.get("trading.symbol") or "BTCUSDT"]
+    
+    try:
+        balance, _ = _fetch_account_snapshot_sync(testnet, symbols)
+        return balance
+    except Exception:
+        # Если не получилось - возвращаем пусто, будет использован fallback
+        return {}
+
+
 def _fetch_account_snapshot_sync(testnet: bool, symbols: list):
     """
     Реальный снапшот по Bybit REST. Требует ключи в окружении (BYBIT_API_KEY/BYBIT_API_SECRET).
@@ -1561,6 +1591,12 @@ async def start_bot():
         cfg = get_config()
         mode = cfg.get("trading.mode") or "paper"
         testnet = cfg.get("trading.testnet", True)
+        
+        # DEBUG: Log что получили из конфига
+        logger.info(f"[START_BOT] DEBUG: cfg.get('trading.mode') = {cfg.get('trading.mode')}")
+        logger.info(f"[START_BOT] DEBUG: mode = {mode}")
+        logger.info(f"[START_BOT] DEBUG: testnet = {testnet}")
+        logger.info(f"[START_BOT] DEBUG: config_path = {cfg.config_path}")
 
         # Normalize symbols (supports both trading.symbol and trading.symbols)
         symbols = _normalize_symbols(cfg)
@@ -1575,7 +1611,7 @@ async def start_bot():
 
         # Add WebSocket handler to loggers (once)
         ws_handler = WebSocketLogHandler()
-        ws_handler.setLevel(logging.INFO)
+        ws_handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
             fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
