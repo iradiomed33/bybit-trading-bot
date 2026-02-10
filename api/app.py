@@ -819,27 +819,27 @@ async def get_trading_stats():
 
 
 @app.get("/api/signals/logs")
-async def get_signal_logs(limit: int = 100, level: str = "all"):
+async def get_signal_logs(
+    limit: int = 100, 
+    level: str = "all",
+    category: str = "all",
+    symbol: str = "all"
+):
     """
+    Получить логи сигналов для отладки в структурированном JSON формате.
 
-    Получить логи сигналов для отладки.
-
-    Показывает только важные логи: SIGNAL GENERATED/ACCEPTED/REJECTED, ORDER EXEC FAILED.
+    Показывает структурированные события с полными метриками, фильтрами и деталями.
     Приоритетно показывает сегодняшние логи.
 
-
     Args:
-
         limit: Количество последних логов (до 500)
-
-        level: Уровень логирования (all, info, warning, error)
-
+        level: Уровень логирования (all, debug, info, warning, error, signal, exec, risk)
+        category: Категория (all, signal, market_analysis, strategy_analysis, execution, risk, kill_switch)
+        symbol: Фильтр по символу (all или конкретный символ)
     """
 
     try:
-
         limit = min(limit, 500)  # Максимум 500
-
         log_dir = Path("logs")
         
         # Сначала пытаемся взять СЕГОДНЯШНИЙ файл
@@ -870,114 +870,170 @@ async def get_signal_logs(limit: int = 100, level: str = "all"):
         log_file = log_files[0]
 
         # Читаем файл в обратном порядке (новые логи первыми)
-
         with open(log_file, "r", encoding="utf-8") as f:
-
             all_lines = f.readlines()
 
-        # Фильтруем только ВАЖНЫЕ логи
-
-        filtered_lines = []
+        # Парсим и фильтруем события
+        events = []
 
         for line in reversed(all_lines):
             # Пропускаем пустые строки
             if not line.strip():
                 continue
-                
-            # Фильтр по типу: показываем только важные сигналы
-            is_important = any([
-                "Stage=GENERATED" in line,
-                "Stage=ACCEPTED" in line,
-                "Stage=REJECTED" in line,
-                "ORDER EXEC FAILED" in line,
-            ])
             
-            if not is_important:
-                continue
-            
-            # Дополнительный фильтр по level (если указан)
-            if level != "all":
-                if level.upper() not in line:
-                    continue
-
-            filtered_lines.append(line.strip())
-
-            if len(filtered_lines) >= limit:
-
-                break
-
-        # Парсим логи в более удобный формат
-
-        logs = []
-
-        for line in filtered_lines:
-
             try:
-
-                parts = line.split(" | ")
-
+                # Пытаемся распарсить как JSON событие (новый формат)
+                # Формат: "TIMESTAMP | LEVEL | JSON_PAYLOAD"
+                parts = line.split(" | ", 2)
                 if len(parts) >= 3:
+                    # Пытаемся распарсить JSON
+                    try:
+                        event = json.loads(parts[2])
+                        # Это структурированное событие
+                    except json.JSONDecodeError:
+                        # Старый формат - конвертируем в структурированное событие
+                        event = _parse_legacy_log(line, parts)
+                else:
+                    # Очень старый формат
+                    continue
+                
+                # Применяем фильтры
+                if not _filter_event(event, level, category, symbol):
+                    continue
+                
+                events.append(event)
 
-                    timestamp = parts[0]
+                if len(events) >= limit:
+                    break
 
-                    log_level = parts[1].strip()
-
-                    message = " | ".join(parts[2:])
-                    
-                    # Определяем тип лога для красивого отображения
-                    log_type = "unknown"
-                    if "Stage=GENERATED" in message:
-                        log_type = "generated"
-                    elif "Stage=ACCEPTED" in message:
-                        log_type = "accepted"
-                    elif "Stage=REJECTED" in message:
-                        log_type = "rejected"
-                    elif "ORDER EXEC FAILED" in message:
-                        log_type = "exec_failed"
-
-                    logs.append(
-
-                        {
-
-                            "timestamp": timestamp,
-
-                            "level": log_level,
-
-                            "message": message,
-
-                            "type": log_type,
-
-                            "raw": line,
-
-                        }
-
-                    )
-
-            except:
-
-                logs.append({"raw": line})
+            except Exception as e:
+                # Если не смогли распарсить - пропускаем
+                logger.debug(f"Failed to parse log line: {e}")
+                continue
 
         return {
-
             "status": "success",
-
-            "data": logs,
-
+            "data": events,
             "file": str(log_file),
-
-            "count": len(logs),
-
+            "count": len(events),
             "limit": limit,
-
             "level_filter": level,
-
+            "category_filter": category,
+            "symbol_filter": symbol,
         }
 
     except Exception as e:
-
         logger.error(f"Failed to get signal logs: {e}")
-
         return {"status": "error", "error": str(e), "data": []}
+
+
+def _parse_legacy_log(line: str, parts: list) -> Dict[str, Any]:
+    """
+    Парсит старый формат логов и конвертирует в структурированное событие.
+    Backward compatibility для логов до внедрения структурированного формата.
+    """
+    timestamp = parts[0]
+    log_level = parts[1].strip()
+    message = parts[2].strip()
+    
+    # Базовое событие
+    event = {
+        "ts": timestamp,
+        "level": log_level,
+        "category": "system",
+        "symbol": "N/A",
+        "message": message,
+        "legacy": True
+    }
+    
+    # Пытаемся извлечь информацию из сообщения
+    if "Stage=GENERATED" in message or "Stage=ACCEPTED" in message or "Stage=REJECTED" in message:
+        event["category"] = "signal"
+        
+        # Извлекаем stage
+        if "Stage=GENERATED" in message:
+            event["stage"] = "GENERATED"
+        elif "Stage=ACCEPTED" in message:
+            event["stage"] = "ACCEPTED"
+        elif "Stage=REJECTED" in message:
+            event["stage"] = "REJECTED"
+        
+        # Извлекаем symbol
+        import re
+        symbol_match = re.search(r'Symbol=([A-Z]+)', message)
+        if symbol_match:
+            event["symbol"] = symbol_match.group(1)
+        
+        # Извлекаем strategy  
+        strategy_match = re.search(r'Strategy=([^|]+)', message)
+        if strategy_match:
+            event["strategy"] = strategy_match.group(1).strip()
+        
+        # Извлекаем direction
+        direction_match = re.search(r'Direction=([A-Z]+)', message)
+        if direction_match:
+            event["direction"] = direction_match.group(1)
+        
+        # Извлекаем confidence
+        confidence_match = re.search(r'Confidence=([\d.]+)', message)
+        if confidence_match:
+            event["confidence"] = float(confidence_match.group(1))
+        
+        # Извлекаем reasons
+        reasons_match = re.search(r'Reasons=(\[[^\]]*\])', message)
+        if reasons_match:
+            try:
+                event["reasons"] = json.loads(reasons_match.group(1))
+            except:
+                pass
+        
+        # Извлекаем values
+        values_match = re.search(r'Values=(\{[^\}]*\})', message)
+        if values_match:
+            try:
+                event["values"] = json.loads(values_match.group(1))
+            except:
+                pass
+    
+    elif "ORDER EXEC FAILED" in message:
+        event["category"] = "execution"
+        event["stage"] = "FAILED"
+        
+        # Извлекаем symbol
+        import re
+        symbol_match = re.search(r'Symbol=([A-Z]+)', message)
+        if symbol_match:
+            event["symbol"] = symbol_match.group(1)
+    
+    return event
+
+
+def _filter_event(event: Dict[str, Any], level: str, category: str, symbol: str) -> bool:
+    """
+    Фильтрует событие по уровню, категории и символу.
+    """
+    # Фильтр по level
+    if level != "all":
+        if event.get("level", "").upper() != level.upper():
+            return False
+    
+    # Фильтр по category
+    if category != "all":
+        # Для обратной совместимости: если category=signal, показываем все важные сигналы
+        if category == "signal":
+            event_cat = event.get("category", "")
+            if event_cat not in ["signal", "execution"]:
+                return False
+        else:
+            if event.get("category", "") != category:
+                return False
+    
+    # Фильтр по symbol
+    if symbol != "all":
+        if event.get("symbol", "") != symbol:
+            return False
+    
+    return True
 
 
 # ============================================================================

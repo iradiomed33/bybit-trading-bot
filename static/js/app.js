@@ -1088,7 +1088,7 @@ async function loadSignalLogs() {
 }
 
 /**
- * Отобразить логи сигналов с цветовой подсветкой
+ * Отобразить логи сигналов с поддержкой структурированных событий
  */
 function displaySignalLogs(data) {
     const container = document.getElementById('signalLogsContainer');
@@ -1102,98 +1102,253 @@ function displaySignalLogs(data) {
     if (!data.data || data.data.length === 0) {
         container.innerHTML = '<p class="text-muted">Нет логов</p>';
         const countEl = document.getElementById('signalLogCount');
-        if (countEl) countEl.textContent = '0 логов';
+        if (countEl) countEl.textContent = '0 событий';
         return;
     }
     
     let html = '';
     
-    data.data.forEach(log => {
-        const message = log.message || log.raw || 'Unknown log';
-        const timestamp = log.timestamp || 'N/A';
-        const logType = log.type || 'unknown';
-        
-        let icon = '📝';
-        let title = 'UNKNOWN';
-        let subtitle = '';
-        let rowClass = 'text-light';
-        let borderColor = 'secondary';
-        
-        // Определяем тип и форматирование
-        switch(logType) {
-            case 'generated':
-                icon = '✅';
-                title = 'SIGNAL GENERATED';
-                subtitle = 'Стратегия создала сигнал';
-                rowClass = 'text-success';
-                borderColor = 'success';
-                break;
-            case 'accepted':
-                icon = '✅';
-                title = 'SIGNAL ACCEPTED';
-                subtitle = 'Сигнал прошел все проверки и ордер открыт';
-                rowClass = 'text-success';
-                borderColor = 'success';
-                break;
-            case 'rejected':
-                icon = '❌';
-                title = 'SIGNAL REJECTED';
-                subtitle = 'Сигнал отклонен (причина в логе)';
-                rowClass = 'text-danger';
-                borderColor = 'danger';
-                break;
-            case 'exec_failed':
-                icon = '❌';
-                title = 'ORDER EXEC FAILED';
-                subtitle = 'Ордер не выполнен (причина в логе)';
-                rowClass = 'text-danger';
-                borderColor = 'danger';
-                break;
-        }
-        
-        // Извлекаем важные поля из сообщения
-        const symbolMatch = message.match(/Symbol=([A-Z]+)/);
-        const directionMatch = message.match(/Direction=([A-Z]+)/);
-        const strategyMatch = message.match(/Strategy=([^|]+)/);
-        const reasonMatch = message.match(/Reasons=(\[[^\]]*\])/);
-        
-        const symbol = symbolMatch ? symbolMatch[1] : '';
-        const direction = directionMatch ? directionMatch[1] : '';
-        const strategy = strategyMatch ? strategyMatch[1].trim() : '';
-        let reasons = '';
-        
-        if (reasonMatch) {
-            try {
-                const reasonsArray = JSON.parse(reasonMatch[1]);
-                reasons = reasonsArray.join(', ');
-            } catch {
-                reasons = reasonMatch[1];
-            }
-        }
-        
-        html += `
-            <div class="log-entry ${rowClass} border-start border-${borderColor} border-3 ps-3 mb-3 py-2 bg-dark rounded">
-                <div class="d-flex justify-content-between align-items-start mb-1">
-                    <div>
-                        <strong>${icon} ${title}</strong>
-                        <div class="small text-muted">${subtitle}</div>
-                    </div>
-                    <small class="text-muted">${timestamp}</small>
-                </div>
-                ${symbol ? `<div class="small"><strong>Symbol:</strong> ${symbol}</div>` : ''}
-                ${direction ? `<div class="small"><strong>Direction:</strong> ${direction}</div>` : ''}
-                ${strategy ? `<div class="small"><strong>Strategy:</strong> ${strategy}</div>` : ''}
-                ${reasons ? `<div class="small text-warning"><strong>Reason:</strong> ${reasons}</div>` : ''}
-            </div>
-        `;
+    data.data.forEach((event, index) => {
+        // Каждое событие - это структурированный JSON объект
+        const cardHtml = createEventCard(event, index);
+        html += cardHtml;
     });
     
     container.innerHTML = html;
     
     const countEl = document.getElementById('signalLogCount');
-    if (countEl) countEl.textContent = `${data.data.length} логов`;
+    if (countEl) countEl.textContent = `${data.data.length} событий`;
     
-    console.log('[displaySignalLogs] Displayed', data.data.length, 'logs');
+    console.log('[displaySignalLogs] Displayed', data.data.length, 'structured events');
+}
+
+/**
+ * Создает HTML карточку для структурированного события
+ */
+function createEventCard(event, index) {
+    const {
+        ts,
+        level,
+        category,
+        symbol,
+        message,
+        stage,
+        strategy,
+        direction,
+        confidence,
+        reasons,
+        values,
+        metrics,
+        filters,
+        details
+    } = event;
+    
+    // Определяем иконку и цвет по category + level + stage
+    let icon = '📝';
+    let borderColor = 'secondary';
+    let badgeClass = 'bg-secondary';
+    
+    if (category === 'signal') {
+        if (stage === 'GENERATED') {
+            icon = '✅';
+            borderColor = 'info';
+            badgeClass = 'bg-info';
+        } else if (stage === 'ACCEPTED') {
+            icon = '✅'; borderColor = 'success';
+            badgeClass = 'bg-success';
+        } else if (stage === 'REJECTED') {
+            icon = '❌';
+            borderColor = 'danger';
+            badgeClass = 'bg-danger';
+        }
+    } else if (category === 'execution') {
+        icon = '⚡';
+        borderColor = 'warning';
+        badgeClass = 'bg-warning';
+        if (stage === 'FAILED') {
+            icon = '❌';
+            borderColor = 'danger';
+            badgeClass = 'bg-danger';
+        }
+    } else if (category === 'risk') {
+        icon = '⚠️';
+        borderColor = 'warning';
+        badgeClass = 'bg-warning';
+    } else if (category === 'kill_switch') {
+        icon = '🛑';
+        borderColor = 'danger';
+        badgeClass = 'bg-danger';
+    } else if (category === 'market_analysis') {
+        icon = '📊';
+        borderColor = 'info';
+        badgeClass = 'bg-info';
+    } else if (category === 'strategy_analysis') {
+        icon = '🔍';
+        borderColor = 'primary';
+        badgeClass = 'bg-primary';
+    }
+    
+    // Summary line (всегда видна)
+    const summaryHtml = `
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fs-4">${icon}</span>
+                <span class="badge ${badgeClass}">${category}</span>
+                <strong class="text-white">${symbol}</strong>
+                <span class="text-light">${message}</span>
+            </div>
+            <small class="text-light">${ts}</small>
+        </div>
+    `;
+    
+    // Expanded details (раскрываются по клику)
+    let expandedHtml = '';
+    
+    // Базовая информация о сигнале
+    if (category === 'signal' && strategy) {
+        expandedHtml += `
+            <div class="row mt-2">
+                <div class="col-md-3">
+                    <small class="text-light">Strategy:</small><br>
+                    <strong class="text-white">${strategy}</strong>
+                </div>
+                ${direction ? `
+                <div class="col-md-3">
+                    <small class="text-light">Direction:</small><br>
+                    <strong class="text-white">${direction}</strong>
+                </div>
+                ` : ''}
+                ${confidence !== undefined ? `
+                <div class="col-md-3">
+                    <small class="text-light">Confidence:</small><br>
+                    <strong class="text-white">${(confidence * 100).toFixed(1)}%</strong>
+                </div>
+                ` : ''}
+                ${stage ? `
+                <div class="col-md-3">
+                    <small class="text-light">Stage:</small><br>
+                    <span class="badge ${badgeClass}">${stage}</span>
+                </div>
+                ` : ''}
+            </div>
+        `;
+    }
+    
+    // Reasons (причины отклонения или предупреждения)
+    if (reasons && reasons.length > 0) {
+        expandedHtml += `
+            <div class="mt-2">
+                <small class="text-light d-block mb-1">Reasons:</small>
+                ${reasons.map(r => `<span class="badge bg-warning text-dark me-1">${r}</span>`).join('')}
+            </div>
+        `;
+    }
+    
+    // Metrics (метрики рынка/стратегии)
+    if (metrics && Object.keys(metrics).length > 0) {
+        const metricsRows = Object.entries(metrics).map(([key, value]) => {
+            const formattedValue = typeof value === 'number' ? value.toFixed(4) : String(value);
+            return `
+                <div class="col-md-3 mb-1">
+                    <small class="text-light">${key}:</small>
+                    <strong class="ms-2 text-white">${formattedValue}</strong>
+                </div>
+            `;
+        }).join('');
+        
+        expandedHtml += `
+            <div class="mt-2">
+                <small class="text-light d-block mb-1">📊 Metrics:</small>
+                <div class="row small">${metricsRows}</div>
+            </div>
+        `;
+    }
+    
+    // Values (значения переменных с порогами)
+    if (values && Object.keys(values).length > 0) {
+        const valuesRows = Object.entries(values).map(([key, value]) => {
+            const formattedValue = typeof value === 'number' ? value.toFixed(4) : String(value);
+            return `
+                <div class="col-md-4 mb-1">
+                    <small class="text-light">${key}:</small>
+                    <strong class="ms-2 text-white">${formattedValue}</strong>
+                </div>
+            `;
+        }).join('');
+        
+        expandedHtml += `
+            <div class="mt-2">
+                <small class="text-light d-block mb-1">🔢 Values:</small>
+                <div class="row small">${valuesRows}</div>
+            </div>
+        `;
+    }
+    
+    // Filters (результаты фильтров стратегии)
+    if (filters && filters.length > 0) {
+        const filtersRows = filters.map(f => {
+            const passIcon = f.pass ? '✅' : '❌';
+            const passClass = f.pass ? 'text-success' : 'text-danger';
+            const valueStr = f.value !== undefined ? f.value : 'N/A';
+            const thresholdStr = f.threshold !== undefined ? f.threshold : 'N/A';
+            
+            return `
+                <tr>
+                    <td class="${passClass}">${passIcon} ${f.name}</td>
+                    <td>${valueStr}</td>
+                    <td>${thresholdStr}</td>
+                    <td class="${passClass}">${f.pass ? 'PASS' : 'FAIL'}</td>
+                </tr>
+            `;
+        }).join('');
+        
+        expandedHtml += `
+            <div class="mt-2">
+                <small class="text-light d-block mb-1">🔍 Filters:</small>
+                <table class="table table-sm table-dark table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Filter</th>
+                            <th>Value</th>
+                            <th>Threshold</th>
+                            <th>Result</th>
+                        </tr>
+                    </thead>
+                    <tbody>${filtersRows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+    
+    // Details (дополнительная информация)
+    if (details && Object.keys(details).length > 0) {
+        const detailsStr = JSON.stringify(details, null, 2);
+        expandedHtml += `
+            <div class="mt-2">
+                <small class="text-light d-block mb-1">📋 Details:</small>
+                <pre class="bg-dark text-light p-2 rounded small">${detailsStr}</pre>
+            </div>
+        `;
+    }
+    
+    // Создаем карточку с возможностью раскрытия
+    const cardId = `event-card-${index}`;
+    const collapseId = `collapse-${index}`;
+    
+    return `
+        <div id="${cardId}" class="card bg-dark border-${borderColor} border-start border-3 mb-2">
+            <div class="card-body p-2 cursor-pointer" data-bs-toggle="collapse" data-bs-target="#${collapseId}">
+                ${summaryHtml}
+            </div>
+            ${expandedHtml ? `
+                <div id="${collapseId}" class="collapse">
+                    <div class="card-body pt-0 pb-2">
+                        ${expandedHtml}
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+    `;
 }
 
 /**
@@ -1207,7 +1362,7 @@ function clearSignalLogs() {
         }
         const countEl = document.getElementById('signalLogCount');
         if (countEl) {
-            countEl.textContent = '0 логов';
+            countEl.textContent = '0 событий';
         }
     }
 }
@@ -1219,111 +1374,98 @@ function addLiveLog(logData) {
     const container = document.getElementById('signalLogsContainer');
     if (!container) return;
     
-    const message = logData.message || 'Unknown log';
-    const timestamp = logData.timestamp ? new Date(logData.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+    let event;
     
-    // Фильтруем только ВАЖНЫЕ логи
-    const isImportant = 
-        message.includes('Stage=GENERATED') ||
-        message.includes('Stage=ACCEPTED') ||
-        message.includes('Stage=REJECTED') ||
-        message.includes('ORDER EXEC FAILED');
-    
-    if (!isImportant) {
-        console.debug('[addLiveLog] Skipping non-important log:', message);
-        return;
-    }
-    
-    // Определяем тип лога
-    let icon = '📝';
-    let title = 'UNKNOWN';
-    let subtitle = '';
-    let rowClass = 'text-light';
-    let borderColor = 'secondary';
-    
-    if (message.includes('Stage=GENERATED')) {
-        icon = '✅';
-        title = 'SIGNAL GENERATED';
-        subtitle = 'Стратегия создала сигнал';
-        rowClass = 'text-success';
-        borderColor = 'success';
-    } else if (message.includes('Stage=ACCEPTED')) {
-        icon = '✅';
-        title = 'SIGNAL ACCEPTED';
-        subtitle = 'Сигнал прошел все проверки и ордер открыт';
-        rowClass = 'text-success';
-        borderColor = 'success';
-    } else if (message.includes('Stage=REJECTED')) {
-        icon = '❌';
-        title = 'SIGNAL REJECTED';
-        subtitle = 'Сигнал отклонен (причина в логе)';
-        rowClass = 'text-danger';
-        borderColor = 'danger';
-    } else if (message.includes('ORDER EXEC FAILED')) {
-        icon = '❌';
-        title = 'ORDER EXEC FAILED';
-        subtitle = 'Ордер не выполнен (причина в логе)';
-        rowClass = 'text-danger';
-        borderColor = 'danger';
-    }
-    
-    // Извлекаем важные поля из сообщения
-    const symbolMatch = message.match(/Symbol=([A-Z]+)/);
-    const directionMatch = message.match(/Direction=([A-Z]+)/);
-    const strategyMatch = message.match(/Strategy=([^|]+)/);
-    const reasonMatch = message.match(/Reasons=(\[[^\]]*\])/);
-    
-    const symbol = symbolMatch ? symbolMatch[1] : '';
-    const direction = directionMatch ? directionMatch[1] : '';
-    const strategy = strategyMatch ? strategyMatch[1].trim() : '';
-    let reasons = '';
-    
-    if (reasonMatch) {
-        try {
-            const reasonsArray = JSON.parse(reasonMatch[1]);
-            reasons = reasonsArray.join(', ');
-        } catch {
-            reasons = reasonMatch[1];
+    // Если logData уже структурированное событие (есть category)
+    if (logData.category) {
+        event = logData;
+    } else {
+        // Парсим legacy формат или создаем базовое событие
+        const message = logData.message || 'Unknown log';
+        const timestamp = logData.timestamp || new Date().toISOString();
+        
+        // Фильтруем только ВАЖНЫЕ логи для legacy формата
+        const isImportant = 
+            message.includes('Stage=GENERATED') ||
+            message.includes('Stage=ACCEPTED') ||
+            message.includes('Stage=REJECTED') ||
+            message.includes('ORDER EXEC FAILED');
+        
+        if (!isImportant) {
+            console.debug('[addLiveLog] Skipping non-important log:', message);
+            return;
+        }
+        
+        // Конвертируем в структурированное событие
+        const symbolMatch = message.match(/Symbol=([A-Z]+)/);
+        const directionMatch = message.match(/Direction=([A-Z]+)/);
+        const strategyMatch = message.match(/Strategy=([^|]+)/);
+        const reasonMatch = message.match(/Reasons=(\[[^\]]*\])/);
+        const stageMatch = message.match(/Stage=([A-Z]+)/);
+        
+        event = {
+            ts: timestamp,
+            level: message.includes('FAILED') ? 'ERROR' : 'SIGNAL',
+            category: message.includes('ORDER EXEC') ? 'execution' : 'signal',
+            symbol: symbolMatch ? symbolMatch[1] : 'UNKNOWN',
+            message: message,
+            stage: stageMatch ? stageMatch[1] : null,
+            strategy: strategyMatch ? strategyMatch[1].trim() : null,
+            direction: directionMatch ? directionMatch[1] : null,
+            reasons: null
+        };
+        
+        if (reasonMatch) {
+            try {
+                event.reasons = JSON.parse(reasonMatch[1]);
+            } catch {
+                event.reasons = [reasonMatch[1]];
+            }
         }
     }
     
-    const logEntry = document.createElement('div');
-    logEntry.className = `log-entry ${rowClass} border-start border-${borderColor} border-3 ps-3 mb-3 py-2 bg-dark rounded fade-in`;
-    logEntry.innerHTML = `
-        <div class="d-flex justify-content-between align-items-start mb-1">
-            <div>
-                <strong>${icon} ${title}</strong>
-                <div class="small text-muted">${subtitle}</div>
-            </div>
-            <small class="text-muted">${timestamp}</small>
-        </div>
-        ${symbol ? `<div class="small"><strong>Symbol:</strong> ${symbol}</div>` : ''}
-        ${direction ? `<div class="small"><strong>Direction:</strong> ${direction}</div>` : ''}
-        ${strategy ? `<div class="small"><strong>Strategy:</strong> ${strategy}</div>` : ''}
-        ${reasons ? `<div class="small text-warning"><strong>Reason:</strong> ${reasons}</div>` : ''}
-    `;
+    // Фильтрация по важности для структурированных событий
+    const isImportantEvent = 
+        event.category === 'signal' ||
+        event.category === 'execution' ||
+        event.category === 'risk' ||
+        event.category === 'kill_switch' ||
+        (event.stage && ['GENERATED', 'ACCEPTED', 'REJECTED'].includes(event.stage));
+    
+    if (!isImportantEvent) {
+        console.debug('[addLiveLog] Skipping non-important event:', event);
+        return;
+    }
+    
+    // Используем createEventCard для рендеринга (индекс = текущее количество логов)
+    const currentCards = container.querySelectorAll('.card');
+    const cardHtml = createEventCard(event, currentCards.length);
+    
+    // Создаем элемент из HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = cardHtml;
+    const logEntry = tempDiv.firstElementChild;
     
     // Добавляем новый лог в начало контейнера
-    const firstChild = container.firstChild;
-    if (firstChild) {
-        container.insertBefore(logEntry, firstChild);
+    if (container.firstChild) {
+        container.insertBefore(logEntry, container.firstChild);
     } else {
         container.appendChild(logEntry);
     }
     
-    // Ограничиваем количество отображаемых логов до 50 (чтобы не заполнять память)
-    const logEntries = container.querySelectorAll('.log-entry');
-    if (logEntries.length > 50) {
-        for (let i = logEntries.length - 1; i >= 50; i--) {
-            logEntries[i].remove();
+    // Ограничиваем количество отображаемых логов до 50
+    const allCards = container.querySelectorAll('.card');
+    if (allCards.length > 50) {
+        for (let i = allCards.length - 1; i >= 50; i--) {
+            allCards[i].remove();
         }
     }
     
     // Обновляем счетчик логов
-    const count = container.querySelectorAll('.log-entry').length;
+    const count = allCards.length;
     const countEl = document.getElementById('signalLogCount');
     if (countEl) {
-        countEl.textContent = `${count} логов`;
+        countEl.textContent = `${count} событий`;
     }
 }
 
