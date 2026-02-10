@@ -228,7 +228,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
         atr = latest.get("atr", 0)
 
-        if atr == 0:
+        if pd.isna(atr) or atr <= 0:
 
             signal_logger.log_filter_check(
 
@@ -238,7 +238,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 passed=False,
 
-                value=atr,
+                value=atr if not pd.isna(atr) else "NaN",
 
                 threshold=">0",
 

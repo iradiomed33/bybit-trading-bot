@@ -133,7 +133,7 @@ class TechnicalIndicators:
 
             tr = np.maximum(tr1, np.maximum(tr2, tr3))
 
-            atr = pd.Series(tr).rolling(window=period).mean()
+            atr = pd.Series(tr, index=df.index).rolling(window=period).mean()
 
             plus_dm = np.zeros(len(df))
 
@@ -193,7 +193,7 @@ class TechnicalIndicators:
 
             tr = np.maximum(tr1, np.maximum(tr2, tr3))
 
-            df["atr"] = pd.Series(tr).rolling(window=period).mean()
+            df["atr"] = pd.Series(tr, index=df.index).rolling(window=period).mean()
 
         df["atr_percent"] = (df["atr"] / df["close"]) * 100
 

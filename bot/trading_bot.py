@@ -1103,7 +1103,7 @@ class TradingBot:
 
             return {
 
-                "d": df,
+                "df": df,
 
                 "orderbook": orderbook,
 
