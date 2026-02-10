@@ -26,6 +26,8 @@ from typing import Dict, Any, Optional
 
 from decimal import Decimal
 
+import numpy as np
+
 from storage.database import Database
 
 from exchange.market_data import MarketDataClient
@@ -868,6 +870,20 @@ class TradingBot:
             # Sort by timestamp and set as DatetimeIndex for VWAP calculation
             df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
             df = df.sort_values("timestamp").set_index("timestamp")
+            
+            # Clean extreme data outliers from testnet (e.g., BTC=1.6M)
+            # Filter OHLC values that deviate > 3x from median
+            for col in ["open", "high", "low", "close"]:
+                median = df[col].median()
+                # Keep values within 3x of median
+                mask = (df[col] > median / 3) & (df[col] < median * 3)
+                outliers = (~mask).sum()
+                if outliers > 0:
+                    logger.warning(f"⚠️  Found {outliers} outliers in {col} (median={median:.2f}), replacing with interpolation")
+                    # Replace outliers with NaN then interpolate
+                    df.loc[~mask, col] = np.nan
+                    df[col] = df[col].interpolate(method='linear', limit_direction='both')
+
 
             logger.debug(f"Loaded {len(df)} candles for 1h timeframe")
 
