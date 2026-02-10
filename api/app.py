@@ -74,20 +74,27 @@ bot_thread = None
 # ============================================================================
 
 class WebSocketLogHandler(logging.Handler):
-    """Handler that broadcasts log records to WebSocket clients"""
+    """Handler that broadcasts log records to WebSocket clients (thread-safe)"""
     
     def emit(self, record):
         try:
             log_entry = self.format(record)
-            # Broadcast to all connected WebSocket clients
-            asyncio.create_task(broadcast_to_clients({
+            message = {
                 "type": "log",
                 "level": record.levelname,
                 "message": log_entry,
                 "timestamp": datetime.now().isoformat()
-            }))
+            }
+            
+            # Send via main event loop if available (thread-safe)
+            if main_event_loop and main_event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    broadcast_to_clients(message),
+                    main_event_loop
+                )
         except Exception:
-            self.handleError(record)
+            # Silently ignore errors (logs still go to file/console)
+            pass
 
 
 # ============================================================================
@@ -116,6 +123,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 # Глобальные переменные для WebSocket
 
 connected_clients: set = set()
+main_event_loop = None  # Will be set on app startup
 
 
 # ============================================================================
@@ -261,6 +269,9 @@ async def get_token_from_header(request) -> Optional[str]:
 async def lifespan(app: FastAPI):
     """Lifecycle менеджер для FastAPI приложения"""
 
+    global main_event_loop
+    main_event_loop = asyncio.get_running_loop()
+    
     logger.info("API server started")
 
     yield
