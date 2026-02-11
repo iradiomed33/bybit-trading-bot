@@ -16,11 +16,11 @@
     ]
   },
   "market_data": {
-    "kline_interval": "60",
+    "kline_interval": "1",
     "kline_limit": 500,
     "orderbook_depth": 50,
     "data_refresh_interval": 12,
-    "orderbook_sanity_max_deviation_pct": 3,
+    "orderbook_sanity_max_deviation_pct": 9,
     "derivatives": {
       "fetch_mark_price": true,
       "fetch_index_price": true,
@@ -33,8 +33,8 @@
     "max_leverage": 10,
     "max_position_size": 100.0,
     "max_notional": 50000.0,
-    "stop_loss_percent": 5,
-    "take_profit_percent": 10,
+    "stop_loss_percent": 2,
+    "take_profit_percent": 5,
     "daily_loss_limit_percent": 5,
     "max_drawdown_percent": 10.0,
     "max_position_notional": 50000.0,
@@ -91,7 +91,7 @@
     }
   },
   "meta_layer": {
-    "use_mtf": true,
+    "use_mtf": false,
     "mtf_timeframes": [
       "1m",
       "5m",
@@ -104,19 +104,19 @@
     "volatility_filter_enabled": false,
     "volatility_threshold": 0.02,
     "no_trade_hours": [],
-    "risk_profile": "Balanced",
-    "high_vol_event_atr_pct": 7
+    "risk_profile": "Aggressive",
+    "high_vol_event_atr_pct": 9
   },
   "no_trade_zone": {
-    "max_atr_pct": 14,
-    "max_spread_pct": 0.5
+    "max_atr_pct": 17,
+    "max_spread_pct": 0.8
   },
   "kill_switch": {
     "max_consecutive_errors": 5,
     "cooldown_minutes": 15
   },
   "execution": {
-    "order_type": "market",
+    "order_type": "limit",
     "time_in_force": "GTC",
     "post_only": false,
     "use_breakeven": false,

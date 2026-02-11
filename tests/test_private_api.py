@@ -133,6 +133,10 @@ class TestPrivateAPISignatures:
 
         assert "X-BAPI-RECV-WINDOW" in headers
 
+        assert "X-BAPI-SIGN-TYPE" in headers
+
+        assert headers["X-BAPI-SIGN-TYPE"] == "2"
+
         # Проверяем что API ключ правильный
 
         assert headers["X-BAPI-API-KEY"] == "TESTKEY"
@@ -222,6 +226,10 @@ class TestPrivateAPISignatures:
         assert "X-BAPI-API-KEY" in headers
 
         assert "X-BAPI-SIGN" in headers
+
+        assert "X-BAPI-SIGN-TYPE" in headers
+
+        assert headers["X-BAPI-SIGN-TYPE"] == "2"
 
     @patch("exchange.base_client.BybitRestClient._rate_limit_wait")
     @patch("requests.Session.post")
