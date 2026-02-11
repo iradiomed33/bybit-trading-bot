@@ -629,6 +629,7 @@ async function loadSettings() {
     // Load basic settings
     document.getElementById('settingTimeframe').value = configData.market_data?.kline_interval || '60';
     document.getElementById('settingMode').value = configData.trading?.mode || 'paper';
+    document.getElementById('settingPositionRisk').value = configData.risk_management?.position_risk_percent || 1.0;
     document.getElementById('settingMaxPositions').value = configData.risk_monitor?.max_positions || 3;
     document.getElementById('settingMaxTotalNotional').value = configData.risk_monitor?.max_total_notional || 100000;
     document.getElementById('settingRiskProfile').value = configData.meta_layer?.risk_profile || 'Balanced';
@@ -691,6 +692,7 @@ async function saveSettings() {
         'execution.post_only': document.getElementById('settingPostOnly').checked,
         
         // Risk management settings
+        'risk_management.position_risk_percent': parseFloat(document.getElementById('settingPositionRisk').value),
         'risk_management.daily_loss_limit_percent': parseFloat(document.getElementById('settingDailyLossLimit').value),
         'risk_management.stop_loss_percent': parseFloat(document.getElementById('settingStopLoss').value),
         'risk_management.take_profit_percent': parseFloat(document.getElementById('settingTakeProfit').value),
