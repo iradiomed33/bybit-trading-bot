@@ -16,8 +16,10 @@ ENV/
 .vscode/
 .idea/
 
-# Logs
-logs/*.log
+# Логи
+logs/
+*.log
+*.log.*
 
 # Storage
 *.db
@@ -39,3 +41,12 @@ TZ.txt
 COMPLIANCE_CHECK.md
 QUICKSTART.md
 LIVE_TESTNET_GUIDE.md
+
+# Конфигурация (с чувствительными данными)
+config/bot_settings.json
+
+# Старые виртуальные окружения
+venv_old/
+
+# Временные файлы
+torage.database import Database
