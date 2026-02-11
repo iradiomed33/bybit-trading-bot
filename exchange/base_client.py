@@ -325,6 +325,8 @@ class BybitRestClient:
 
                     "X-BAPI-RECV-WINDOW": recv_window,
 
+                    "X-BAPI-SIGN-TYPE": "2",
+
                 }
 
             )
@@ -347,9 +349,9 @@ class BybitRestClient:
 
                 elif method.upper() == "POST":
 
-                    # ВАЖНО: отправляем тот же body_string, что использовался для подписи!
+                    # ВАЖНО: отправляем JSON body для подписи и передачи!
 
-                    response = self.session.post(url, data=body_string, headers=headers)
+                    response = self.session.post(url, json=params, headers=headers)
 
                 else:
 

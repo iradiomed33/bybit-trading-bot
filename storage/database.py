@@ -376,6 +376,26 @@ class Database:
 
         )
 
+        # Таблица для хранения ключ-значение конфигурации
+
+        cursor.execute(
+
+            """
+
+            CREATE TABLE IF NOT EXISTS config (
+
+                key TEXT PRIMARY KEY,
+
+                value TEXT NOT NULL,
+
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+
+            )
+
+        """
+
+        )
+
         self.conn.commit()
 
         logger.info("Database schema initialized")
@@ -713,6 +733,37 @@ class Database:
         self.conn.commit()
 
         logger.debug(f"Error logged: {error_type}")
+
+    def save_config(self, key: str, value: Any) -> None:
+        """Сохранить значение конфигурации"""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO config (key, value, updated_at)
+            VALUES (?, ?, ?)
+        """,
+            (key, json.dumps(value), datetime.now().isoformat()),
+        )
+        self.conn.commit()
+        logger.debug(f"Config saved: {key}={value}")
+
+    def get_config(self, key: str, default: Any = None) -> Any:
+        """Получить значение конфигурации"""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT value FROM config WHERE key = ?
+        """,
+            (key,),
+        )
+        row = cursor.fetchone()
+        if row:
+            try:
+                return json.loads(row[0])
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to decode config value for {key}, returning as string")
+                return row[0]
+        return default
 
     def get_active_orders(self) -> List[Dict[str, Any]]:
         """Получить активные ордера из БД"""
