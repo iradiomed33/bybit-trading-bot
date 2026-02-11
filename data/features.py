@@ -319,7 +319,7 @@ class FeaturePipeline:
     def calculate_orderflow_features(
         self, 
         orderbook: Dict[str, Any],
-        last_close: float = None,
+        ticker_last_price: float = None,
         orderbook_sanity_max_deviation_pct: float = 3.0
     ) -> Dict[str, float]:
         """
@@ -340,8 +340,8 @@ class FeaturePipeline:
         
         Args:
             orderbook: Orderbook data with bids/asks
-            last_close: Last candle close price for sanity check
-            orderbook_sanity_max_deviation_pct: Max allowed deviation from close price
+            ticker_last_price: Current lastPrice from /v5/market/tickers for sanity check (more reliable than candle close)
+            orderbook_sanity_max_deviation_pct: Max allowed deviation from ticker price
 
         """
 
@@ -367,14 +367,16 @@ class FeaturePipeline:
 
         features["midprice"] = (best_bid + best_ask) / 2
         
-        # SANITY CHECK: Compare orderbook midprice with last candle close
-        if last_close and last_close > 0:
-            deviation_pct = abs(features["midprice"] - last_close) / last_close * 100
+        # SANITY CHECK: Compare orderbook midprice with current ticker lastPrice
+        # Using ticker price instead of candle close because it's more real-time and avoids
+        # systematic bias from older candle data
+        if ticker_last_price and ticker_last_price > 0:
+            deviation_pct = abs(features["midprice"] - ticker_last_price) / ticker_last_price * 100
             
             if deviation_pct > orderbook_sanity_max_deviation_pct:
                 logger.warning(
                     f"⚠️  ORDERBOOK SANITY CHECK FAILED: midprice={features['midprice']:.2f} "
-                    f"vs last_close={last_close:.2f}, deviation={deviation_pct:.2f}% "
+                    f"vs ticker lastPrice={ticker_last_price:.2f}, deviation={deviation_pct:.2f}% "
                     f"(threshold={orderbook_sanity_max_deviation_pct}%)"
                 )
                 # Mark orderbook as invalid - set spread to None to skip spread checks
@@ -664,6 +666,8 @@ class FeaturePipeline:
 
         derivatives_data: Optional[Dict[str, float]] = None,
         
+        ticker_data: Optional[Dict[str, Any]] = None,
+        
         orderbook_sanity_max_deviation_pct: float = 3.0,
 
     ) -> pd.DataFrame:
@@ -679,6 +683,8 @@ class FeaturePipeline:
             orderbook: Данные стакана (опционально)
 
             derivatives_data: Деривативные метрики (опционально)
+            
+            ticker_data: Current ticker data from /v5/market/tickers (for orderbook sanity check)
             
             orderbook_sanity_max_deviation_pct: Max deviation % for orderbook sanity check
 
@@ -714,12 +720,18 @@ class FeaturePipeline:
         # 4. Order Flow (если есть стакан)
 
         if orderbook:
-            # Get last close for sanity check
-            last_close = float(df.iloc[-1]["close"]) if len(df) > 0 else None
+            # Extract ticker lastPrice for sanity check (more reliable than candle close)
+            ticker_last_price = None
+            if ticker_data and isinstance(ticker_data, dict):
+                ticker_last_price = float(ticker_data.get("lastPrice", 0)) if ticker_data.get("lastPrice") else None
+            
+            # Fallback to last close if ticker data not available (backward compatibility)
+            if not ticker_last_price:
+                ticker_last_price = float(df.iloc[-1]["close"]) if len(df) > 0 else None
 
             orderflow_features = self.calculate_orderflow_features(
                 orderbook,
-                last_close=last_close,
+                ticker_last_price=ticker_last_price,
                 orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
             )
 

@@ -974,8 +974,21 @@ class TradingBot:
                 result = orderbook_resp.get("result", {})
 
                 orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
+                
+                # Get ticker data for orderbook sanity check (extract lastPrice from tickers)
+                ticker_resp = retry_api_call(
+                    self.market_client.get_tickers, self.symbol, category="linear", max_retries=2
+                )
+                ticker_data = None
+                if ticker_resp and ticker_resp.get("retCode") == 0:
+                    tickers = ticker_resp.get("result", {}).get("list", [])
+                    if tickers:
+                        ticker_data = tickers[0]  # First item is our symbol
 
-                orderflow_features = self.pipeline.calculate_orderflow_features(orderbook)
+                orderflow_features = self.pipeline.calculate_orderflow_features(
+                    orderbook, 
+                    ticker_last_price=float(ticker_data["lastPrice"]) if ticker_data and ticker_data.get("lastPrice") else None
+                )
 
             # Деривативные данные с retry logic (могут быть rate limits)
 

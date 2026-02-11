@@ -980,6 +980,9 @@ def strategy_test():
         kline_resp = market_client.get_kline(symbol, interval="60", limit=500)
 
         orderbook_resp = market_client.get_orderbook(symbol, limit=50)
+        
+        # Get ticker data for orderbook sanity check
+        ticker_resp = market_client.get_tickers(symbol, category="linear")
 
         # Преобразуем в DataFrame
 
@@ -1009,19 +1012,29 @@ def strategy_test():
 
             orderbook = {"bids": result.get("b", []), "asks": result.get("a", [])}
 
+        # Ticker data for sanity check
+        ticker_data = None
+        if ticker_resp.get("retCode") == 0:
+            tickers = ticker_resp.get("result", {}).get("list", [])
+            if tickers:
+                ticker_data = tickers[0]
+
         # Строим фичи
 
         logger.info("Building features...")
 
-        df_with_features = pipeline.build_features(df, orderbook=orderbook)
+        df_with_features = pipeline.build_features(df, orderbook=orderbook, ticker_data=ticker_data)
 
-        # Дополнительные фичи из orderbook
+        # Дополнительные фичи из orderbook (используются для тестирования стратегий)
 
         features = {}
 
-        if orderbook:
+        if orderbook and ticker_data:
 
-            features = pipeline.calculate_orderflow_features(orderbook)
+            features = pipeline.calculate_orderflow_features(
+                orderbook,
+                ticker_last_price=float(ticker_data.get("lastPrice")) if ticker_data.get("lastPrice") else None
+            )
 
         # Инициализируем стратегии
 

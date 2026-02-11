@@ -170,6 +170,44 @@ class MarketDataClient:
 
         return response
 
+    def get_tickers(
+
+        self, symbol: Optional[str] = None, category: str = "linear"
+
+    ) -> Dict[str, Any]:
+        """
+
+        Получить current ticker info (последняя цена, volume, изменение и т.д.).
+
+
+        Args:
+
+            symbol: Символ (опционально, если не указан - все инструменты)
+
+            category: Категория (linear, inverse, spot, option)
+
+
+        Returns:
+
+            Полный ответ API с ticker информацией
+
+
+        Docs: https://bybit-exchange.github.io/docs/v5/market/tickers
+
+        """
+
+        params = {"category": category}
+
+        if symbol:
+
+            params["symbol"] = symbol
+
+        logger.debug(f"Fetching tickers: {symbol or 'all'} (category={category})")
+
+        response = self.client.get("/v5/market/tickers", params=params)
+
+        return response
+
     def get_server_time(self) -> Dict[str, Any]:
         """
 
