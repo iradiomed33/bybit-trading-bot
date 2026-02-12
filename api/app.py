@@ -412,6 +412,9 @@ async def update_config(key: str, body: ConfigUpdate):
 
         config.save()
 
+        # ВАЖНО: Перезагрузить из файла чтобы синхронизировать кеш с диском
+        config.reload()
+
         # Отправить обновление всем подключённым клиентам
 
         await broadcast_message(
@@ -1734,6 +1737,10 @@ async def start_bot():
 
         # Get config
         cfg = get_config()
+        
+        # ВАЖНО: Перезагрузить конфиг из файла перед запуском (на случай изменений через UI)
+        cfg.reload()
+        
         mode = cfg.get("trading.mode") or "paper"
         testnet = cfg.get("trading.testnet", True)
         
