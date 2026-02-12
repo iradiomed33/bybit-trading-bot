@@ -22,9 +22,11 @@ def debug_no_signals():
 
         from bot.trading_bot import TradingBot
 
-        from strategy import TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy
-
         from strategy.meta_layer import NoTradeZones, RegimeSwitcher
+
+        from config.settings import ConfigManager
+
+        from bot.strategy_builder import StrategyBuilder
 
         logger.info("=" * 60)
 
@@ -32,17 +34,17 @@ def debug_no_signals():
 
         logger.info("=" * 60)
 
+        # Create strategies from config
+
+        logger.info("\nInitializing strategies from config...")
+
+        config = ConfigManager()
+
+        builder = StrategyBuilder(config)
+
+        strategies = builder.build_strategies()
+
         # Create bot
-
-        strategies = [
-
-            TrendPullbackStrategy(),
-
-            BreakoutStrategy(),
-
-            MeanReversionStrategy(),
-
-        ]
 
         bot = TradingBot(mode="paper", strategies=strategies, symbol="BTCUSDT", testnet=True)
 

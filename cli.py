@@ -1036,19 +1036,14 @@ def strategy_test():
                 ticker_last_price=float(ticker_data.get("lastPrice")) if ticker_data.get("lastPrice") else None
             )
 
-        # Инициализируем стратегии
+        # Инициализируем стратегии через StrategyBuilder
 
-        logger.info("\n[1] Initializing strategies...")
+        logger.info("\n[1] Initializing strategies from config...")
 
-        strategies = [
-
-            TrendPullbackStrategy(),
-
-            BreakoutStrategy(),
-
-            MeanReversionStrategy(),
-
-        ]
+        from bot.strategy_builder import StrategyBuilder
+        config = ConfigManager()
+        builder = StrategyBuilder(config)
+        strategies = builder.build_strategies()
 
         # Meta-layer
 
