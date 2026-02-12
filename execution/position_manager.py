@@ -64,6 +64,8 @@ class PositionManager:
 
         time_stop_minutes: int = 60,
 
+        partial_exit_levels: Optional[list] = None,  # [(R_level, percent_to_close), ...]
+
     ):
         """
 
@@ -122,9 +124,17 @@ class PositionManager:
 
             "partial_exits": [],
 
+            "partial_exit_levels": partial_exit_levels or [
+                (2.0, 0.50),  # Закрыть 50% на 2R
+                (3.0, 0.25),  # Закрыть 25% на 3R
+            ],
+
         }
 
-        logger.info(f"Position registered: {side} {size} {symbol} @ {entry_price}, SL={stop_loss}")
+        logger.info(
+            f"Position registered: {side} {size} {symbol} @ {entry_price}, "
+            f"SL={stop_loss}, partial_exits={len(self.active_positions[symbol]['partial_exit_levels'])} levels"
+        )
 
     def update_position(self, symbol: str, current_price: float, current_size: float):
         """
@@ -160,17 +170,20 @@ class PositionManager:
 
             pos["lowest_price"] = min(pos["lowest_price"], current_price)
 
-        # 1. Проверяем breakeven
+        # 1. Проверяем partial exits (scale-out)
+        self._check_partial_exits(symbol, current_price)
+
+        # 2. Проверяем breakeven
 
         if not pos["breakeven_moved"]:
 
             self._check_breakeven(symbol, current_price)
 
-        # 2. Проверяем trailing
+        # 3. Проверяем trailing
 
         self._check_trailing(symbol, current_price)
 
-        # 3. Проверяем time stop
+        # 4. Проверяем time stop
 
         self._check_time_stop(symbol, current_price)
 
@@ -215,18 +228,127 @@ class PositionManager:
 
             new_stop = entry
 
-            # Здесь нужно обновить стоп на бирже (через modify order или закрыть/открыть новый)
+            # ИСПРАВЛЕНО: Реально обновляем стоп на бирже через order_manager
+            try:
+                from decimal import Decimal
+                # Обновляем Trading Stop на бирже
+                result = self.order_manager.set_trading_stop(
+                    category="linear",
+                    symbol=symbol,
+                    position_idx=0,
+                    stop_loss=str(new_stop),
+                    sl_trigger_by="LastPrice",
+                )
+                
+                if result.success:
+                    pos["stop_loss"] = new_stop
+                    pos["breakeven_moved"] = True
+                    logger.info(f"✓ Breakeven set on exchange: new SL = {new_stop}")
+                else:
+                    logger.error(f"Failed to set breakeven on exchange: {result.error}")
+            except Exception as e:
+                logger.error(f"Error setting breakeven: {e}", exc_info=True)
+                # Fallback: обновляем локально для виртуального мониторинга
+                pos["stop_loss"] = new_stop
+                pos["breakeven_moved"] = True
+                logger.warning(f"Breakeven set locally only (exchange update failed)")
 
-            # Упрощённо: просто обновляем локально
-
-            pos["stop_loss"] = new_stop
-
-            pos["breakeven_moved"] = True
-
-            logger.info(f"✓ Breakeven set: new SL = {new_stop}")
+    def _check_partial_exits(self, symbol: str, current_price: float):
+        """
+        Проверка условий для частичного закрытия позиции (scale-out).
+        
+        ТЗ 7.2: "Частичные тейки (scale-out)"
+        
+        Закрывает часть позиции при достижении определённых уровней прибыли (в R).
+        Например: 50% на 2R, 25% на 3R.
+        """
+        pos = self.active_positions[symbol]
+        
+        entry = pos["entry_price"]
+        stop_loss = pos["stop_loss"]
+        current_size = pos["current_size"]
+        
+        # Расстояние до стопа (risk)
+        risk_distance = abs(entry - stop_loss)
+        if risk_distance == 0:
+            return
+        
+        # Текущая прибыль (в R)
+        if pos["side"] == "Buy":
+            profit_distance = current_price - entry
+        else:
+            profit_distance = entry - current_price
+        
+        r_multiple = profit_distance / risk_distance
+        
+        # Проверяем каждый уровень partial exit
+        for r_level, percent_to_close in pos["partial_exit_levels"]:
+            # Проверяем, не был ли этот уровень уже закрыт
+            already_exited = any(
+                exit_info["r_level"] == r_level 
+                for exit_info in pos["partial_exits"]
+            )
+            
+            if already_exited:
+                continue
+            
+            # Если достигли R-уровня, закрываем часть позиции
+            if r_multiple >= r_level:
+                # Рассчитываем количество для закрытия
+                qty_to_close = current_size * percent_to_close
+                
+                if qty_to_close < 0.00001:  # Минимальный размер
+                    logger.debug(f"Partial exit qty too small: {qty_to_close}")
+                    continue
+                
+                logger.info(
+                    f"🎯 Partial exit triggered for {symbol}: "
+                    f"R={r_multiple:.2f} >= {r_level}R, "
+                    f"closing {percent_to_close*100:.0f}% ({qty_to_close:.6f})"
+                )
+                
+                # Выполняем частичное закрытие через order_manager
+                try:
+                    close_side = "Sell" if pos["side"] == "Buy" else "Buy"
+                    
+                    result = self.order_manager.create_order(
+                        category="linear",
+                        symbol=symbol,
+                        side=close_side,
+                        order_type="Market",
+                        qty=float(qty_to_close),
+                    )
+                    
+                    if result.success:
+                        # Обновляем размер позиции
+                        new_size = current_size - qty_to_close
+                        pos["current_size"] = new_size
+                        
+                        # Записываем информацию о partial exit
+                        pos["partial_exits"].append({
+                            "r_level": r_level,
+                            "percent": percent_to_close,
+                            "qty_closed": qty_to_close,
+                            "price": current_price,
+                            "timestamp": time.time(),
+                        })
+                        
+                        logger.info(
+                            f"✓ Partial exit executed: {qty_to_close:.6f} @ {current_price:.2f}, "
+                            f"remaining size: {new_size:.6f}"
+                        )
+                    else:
+                        logger.error(f"Partial exit failed: {result.error}")
+                        
+                except Exception as e:
+                    logger.error(f"Error executing partial exit: {e}", exc_info=True)
 
     def _check_trailing(self, symbol: str, current_price: float):
-        """Проверка трейлинг стопа"""
+        """
+        Проверка трейлинг стопа с синхронизацией на бирже.
+        
+        УЛУЧШЕНО: Теперь реально обновляет SL на бирже через Trading Stop API.
+        """
 
         pos = self.active_positions[symbol]
 
@@ -241,14 +363,18 @@ class PositionManager:
             # Двигаем стоп вверх если trailing_stop выше текущего стопа
 
             if trailing_stop > pos["stop_loss"]:
+                old_stop = pos["stop_loss"]
 
                 logger.info(
 
                     f"Trailing stop updated: {symbol} "
 
-                    f"SL {pos['stop_loss']:.2f} -> {trailing_stop:.2f}"
+                    f"SL {old_stop:.2f} -> {trailing_stop:.2f}"
 
                 )
+
+                # УЛУЧШЕНО: Обновляем SL на бирже
+                self._update_stop_on_exchange(symbol, trailing_stop)
 
                 pos["stop_loss"] = trailing_stop
 
@@ -259,14 +385,18 @@ class PositionManager:
             trailing_stop = pos["lowest_price"] * (1 + offset_percent / 100)
 
             if trailing_stop < pos["stop_loss"]:
+                old_stop = pos["stop_loss"]
 
                 logger.info(
 
                     f"Trailing stop updated: {symbol} "
 
-                    f"SL {pos['stop_loss']:.2f} -> {trailing_stop:.2f}"
+                    f"SL {old_stop:.2f} -> {trailing_stop:.2f}"
 
                 )
+
+                # УЛУЧШЕНО: Обновляем SL на бирже
+                self._update_stop_on_exchange(symbol, trailing_stop)
 
                 pos["stop_loss"] = trailing_stop
 
@@ -281,13 +411,64 @@ class PositionManager:
 
         if elapsed > time_limit:
 
-            logger.warning(f"Time stop triggered for {symbol}: {elapsed / 60:.0f} minutes elapsed")
+            logger.warning(f"⏱️ Time stop triggered for {symbol}: {elapsed / 60:.0f} minutes elapsed")
 
-            # Закрываем позицию (упрощённо: просто логируем, реальное закрытие через order_manager)
+            # ИСПРАВЛЕНО: Реально закрываем позицию через order_manager
+            try:
+                # Создаём противоположный Market ордер для закрытия
+                close_side = "Sell" if pos["side"] == "Buy" else "Buy"
+                close_qty = pos["current_size"]
+                
+                logger.info(f"Closing {symbol} position due to time stop: {close_side} {close_qty}")
+                
+                result = self.order_manager.create_order(
+                    category="linear",
+                    symbol=symbol,
+                    side=close_side,
+                    order_type="Market",
+                    qty=float(close_qty),
+                )
+                
+                if result.success:
+                    logger.info(f"✓ Time stop executed: position closed at ~{current_price}")
+                    self.close_position(symbol, reason="time_stop")
+                else:
+                    logger.error(f"Failed to close position on time stop: {result.error}")
+            except Exception as e:
+                logger.error(f"Error executing time stop: {e}", exc_info=True)
 
-            logger.info(f"Closing {symbol} due to time stop")
-
-            # self.close_position(symbol, current_price, reason="time_stop")
+    def _update_stop_on_exchange(self, symbol: str, new_stop_loss: float) -> bool:
+        """
+        Обновить Stop Loss на бирже через Trading Stop API.
+        
+        Используется для синхронизации trailing stop с биржей.
+        
+        Args:
+            symbol: Символ
+            new_stop_loss: Новая цена SL
+            
+        Returns:
+            True если обновление успешно
+        """
+        try:
+            result = self.order_manager.set_trading_stop(
+                category="linear",
+                symbol=symbol,
+                position_idx=0,
+                stop_loss=str(new_stop_loss),
+                sl_trigger_by="LastPrice",
+            )
+            
+            if result.success:
+                logger.info(f"✓ Trailing stop synced to exchange: {symbol} SL={new_stop_loss:.2f}")
+                return True
+            else:
+                logger.warning(f"Failed to sync trailing stop to exchange: {result.error}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error syncing trailing stop to exchange: {e}", exc_info=True)
+            return False
 
     def close_position(self, symbol: str, reason: str = "manual"):
         """Закрыть позицию"""

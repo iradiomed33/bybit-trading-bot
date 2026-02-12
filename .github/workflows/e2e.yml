@@ -1,0 +1,149 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'api/**'
+      - 'bot/**'
+      - 'config/**'
+      - 'static/**'
+      - 'tests/e2e/**'
+      - '.github/workflows/e2e.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # Можно добавить mock exchange service если нужно
+      # mock-exchange:
+      #   image: mockserver/mockserver:latest
+      #   ports:
+      #     - 1080:1080
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Install E2E dependencies
+        working-directory: tests/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Start API Server (background)
+        run: |
+          # Используем testnet конфиг для тестов
+          export ENVIRONMENT=testnet
+          python run_api.py &
+          echo "API_PID=$!" >> $GITHUB_ENV
+          
+          # Ждём пока сервер поднимется
+          for i in {1..30}; do
+            if curl -s http://localhost:8000/health > /dev/null; then
+              echo "✅ API Server ready"
+              break
+            fi
+            echo "⏳ Waiting for API server... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run E2E Tests
+        working-directory: tests/e2e
+        run: |
+          npm test
+        env:
+          CI: true
+          BASE_URL: http://localhost:8000
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/playwright-report/
+            tests/e2e/test-results.json
+          retention-days: 7
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: tests/e2e/test-results/**/*.png
+          retention-days: 7
+
+      - name: Upload videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-videos
+          path: tests/e2e/test-results/**/*.webm
+          retention-days: 7
+
+      - name: Stop API Server
+        if: always()
+        run: |
+          if [ ! -z "$API_PID" ]; then
+            kill $API_PID || true
+          fi
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let resultsPath = 'tests/e2e/test-results.json';
+            
+            if (!fs.existsSync(resultsPath)) {
+              console.log('No test results found');
+              return;
+            }
+            
+            const results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+            const passed = results.stats?.passed || 0;
+            const failed = results.stats?.failed || 0;
+            const total = passed + failed;
+            
+            const emoji = failed === 0 ? '✅' : '❌';
+            
+            const comment = `## ${emoji} E2E Test Results
+            
+            - **Passed**: ${passed}/${total}
+            - **Failed**: ${failed}/${total}
+            - **Duration**: ${results.stats?.duration || 'N/A'}ms
+            
+            ${failed > 0 ? '⚠️ Some tests failed. Check artifacts for details.' : '🎉 All tests passed!'}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

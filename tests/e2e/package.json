@@ -1,0 +1,27 @@
+{
+  "name": "bybit-trading-bot-e2e",
+  "version": "1.0.0",
+  "description": "E2E tests for Bybit Trading Bot UI settings",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "test:settings": "playwright test settings.spec.ts",
+    "test:advanced": "playwright test settings.advanced.spec.ts",
+    "test:validation": "playwright test settings.validation.spec.ts",
+    "report": "playwright show-report"
+  },
+  "keywords": [
+    "e2e",
+    "playwright",
+    "testing"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}

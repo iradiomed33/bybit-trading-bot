@@ -502,6 +502,108 @@
 
                         <div class="col-md-6">
                             <div class="card">
+                                <div class="card-header bg-success text-white">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-graph-up-arrow"></i> Сопровождение позиций
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">
+                                            Breakeven при (R)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="При достижении этого R-множителя Stop Loss передвинется на цену входа. R = risk distance (расстояние до SL). 1.5R = +50% к риску"></i>
+                                        </label>
+                                        <input type="number" class="form-control" id="settingBreakevenTrigger" data-testid="settings-pm-breakeven" min="0.5" max="5" step="0.1" value="1.5">
+                                        <small class="form-text text-muted">1.5 = перевод при +50% к риску</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">
+                                            Trailing Stop отступ (%)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Отступ от максимальной цены для trailing stop. 1% = SL будет на 1% ниже максимума (Long) или выше минимума (Short)"></i>
+                                        </label>
+                                        <input type="number" class="form-control" id="settingTrailingOffset" data-testid="settings-pm-trailing" min="0.1" max="5" step="0.1" value="1.0">
+                                        <small class="form-text text-muted">Чем меньше, тем агрессивнее</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">
+                                            Time Stop (минут)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Автоматическое закрытие позиции если она не движется N минут. Защита от 'застрявших' позиций"></i>
+                                        </label>
+                                        <input type="number" class="form-control" id="settingTimeStop" data-testid="settings-pm-timestop" min="5" max="240" step="5" value="60">
+                                        <small class="form-text text-muted">Закрыть если не движется</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Partial Exits (Scale-Out) -->
+                    <div class="row mt-3">
+                        <div class="col-md-12">
+                            <div class="card">
+                                <div class="card-header bg-info text-white">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-exclude"></i> Partial Exits (Scale-Out)
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3 form-check">
+                                        <input type="checkbox" class="form-check-input" id="settingPartialExitsEnabled" data-testid="settings-pm-partial-enabled" checked>
+                                       <label class="form-check-label" for="settingPartialExitsEnabled">
+                                            Включить частичное закрытие позиций
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Частичное закрытие позиции при достижении определённых уровней прибыли. Позволяет фиксировать прибыль по частям, снижая риск"></i>
+                                        </label>
+                                    </div>
+                                    
+                                    <div id="partialExitsLevels">
+                                        <div class="alert alert-info">
+                                            <i class="bi bi-info-circle"></i> <strong>Что такое R-множитель?</strong><br>
+                                            R = расстояние до Stop Loss (риск). Пример: Вход $45000, SL $44000 → R = $1000<br>
+                                            2R = прибыль $2000 (цена $47000)<br>
+                                            3R = прибыль $3000 (цена $48000)
+                                        </div>
+                                        
+                                        <!-- Level 1 -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Уровень 1: При (R)</label>
+                                                <input type="number" class="form-control" id="settingPartialExit1R" data-testid="settings-pm-partial-1-r" min="0.5" max="10" step="0.5" value="2.0">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Закрыть (%)</label>
+                                                <input type="number" class="form-control" id="settingPartialExit1Percent" data-testid="settings-pm-partial-1-pct" min="0.01" max="1" step="0.05" value="0.50">
+                                                <small class="form-text text-muted">0.50 = 50% позиции</small>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Level 2 -->
+                                        <div class="row mb-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Уровень 2: При (R)</label>
+                                                <input type="number" class="form-control" id="settingPartialExit2R" data-testid="settings-pm-partial-2-r" min="0.5" max="10" step="0.5" value="3.0">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Закрыть (%)</label>
+                                                <input type="number" class="form-control" id="settingPartialExit2Percent" data-testid="settings-pm-partial-2-pct" min="0.01" max="1" step="0.05" value="0.25">
+                                                <small class="form-text text-muted">0.25 = 25% позиции</small>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="alert alert-warning">
+                                            <i class="bi bi-exclamation-triangle"></i> <strong>Пример настройки:</strong><br>
+                                            Уровень 1: 2R, 50% → При достижении 2R закроется половина позиции<br>
+                                            Уровень 2: 3R, 25% → При 3R закроется ещё 25% (останется 25% с trailing stop)
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Save/Reset buttons -->
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
                                 <div class="card-header bg-primary text-white">
                                     <h6 class="mb-0">Действия</h6>
                                 </div>

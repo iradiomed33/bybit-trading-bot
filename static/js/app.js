@@ -691,6 +691,25 @@ async function loadSettings() {
     document.getElementById('settingStopLoss').value = configData.risk_management?.stop_loss_percent || 2.0;
     document.getElementById('settingTakeProfit').value = configData.risk_management?.take_profit_percent || 5.0;
     
+    // Load position management settings
+    document.getElementById('settingBreakevenTrigger').value = configData.position_management?.breakeven_trigger || 1.5;
+    document.getElementById('settingTrailingOffset').value = configData.position_management?.trailing_offset_percent || 1.0;
+    document.getElementById('settingTimeStop').value = configData.position_management?.time_stop_minutes || 60;
+    
+    // Load partial exits settings
+    const partialExitsEnabled = configData.position_management?.partial_exits?.enabled !== false;  // default true
+    document.getElementById('settingPartialExitsEnabled').checked = partialExitsEnabled;
+    
+    const partialLevels = configData.position_management?.partial_exits?.levels || [];
+    if (partialLevels.length >= 1) {
+        document.getElementById('settingPartialExit1R').value = partialLevels[0].r_level || 2.0;
+        document.getElementById('settingPartialExit1Percent').value = partialLevels[0].percent || 0.50;
+    }
+    if (partialLevels.length >= 2) {
+        document.getElementById('settingPartialExit2R').value = partialLevels[1].r_level || 3.0;
+        document.getElementById('settingPartialExit2Percent').value = partialLevels[1].percent || 0.25;
+    }
+    
     console.log('[loadSettings] Loaded symbols:', symbols);
     
     // Reset advancedTouched flag after loading
@@ -767,8 +786,33 @@ async function saveSettings() {
     updates['strategies.TrendPullback.volume_confirmation_mode'] = volumeMode;
     updates['strategies.TrendPullback.volume_z_threshold'] = volumeThreshold;
 
+    // Position management settings
+    updates['position_management.breakeven_trigger'] = parseFloat(document.getElementById('settingBreakevenTrigger').value);
+    updates['position_management.trailing_offset_percent'] = parseFloat(document.getElementById('settingTrailingOffset').value);
+    updates['position_management.time_stop_minutes'] = parseInt(document.getElementById('settingTimeStop').value);
+    
+    // Partial exits settings
+    updates['position_management.partial_exits.enabled'] = document.getElementById('settingPartialExitsEnabled').checked;
+    
+    // Partial exits levels array
+    const partialExitsLevels = [
+        {
+            r_level: parseFloat(document.getElementById('settingPartialExit1R').value),
+            percent: parseFloat(document.getElementById('settingPartialExit1Percent').value)
+        },
+        {
+            r_level: parseFloat(document.getElementById('settingPartialExit2R').value),
+            percent: parseFloat(document.getElementById('settingPartialExit2Percent').value)
+        }
+    ];
+    updates['position_management.partial_exits.levels'] = partialExitsLevels;
+
     console.log('[saveSettings] Saving with symbols:', symbols);
     console.log('[saveSettings] Volume confirmation:', volumeMode, '| threshold:', volumeThreshold);
+    console.log('[save Settings] Position management: breakeven=', updates['position_management.breakeven_trigger'], 
+                ', trailing=', updates['position_management.trailing_offset_percent'],
+                ', timestop=', updates['position_management.time_stop_minutes']);
+    console.log('[saveSettings] Partial exits enabled:', updates['position_management.partial_exits.enabled'], '| levels:', partialExitsLevels);
     
     let saved = true;
     for (const [key, value] of Object.entries(updates)) {

@@ -652,13 +652,29 @@ class TradingBot:
 
                 self._update_metrics()
 
-                # 6. Проверяем SL/TP уровни и виртуальные триггеры (если в live mode)
+                # 6. Обновляем position_manager для breakeven/trailing/time_stop
+                if self.mode == "live" and self.position_manager and data.get("df") is not None:
+                    current_price = float(df_with_features.iloc[-1]["close"])
+                    
+                    # Обновляем каждую активную позицию
+                    for symbol in list(self.position_manager.active_positions.keys()):
+                        # Получаем текущий размер позиции из position_state_manager
+                        current_size = float(normalized_qty) if symbol == self.symbol else 0
+                        if self.position_state_manager and self.position_state_manager.has_position():
+                            pos = self.position_state_manager.get_position()
+                            if pos and pos.symbol == symbol:
+                                current_size = float(pos.qty)
+                        
+                        # Обновляем позицию (запускает проверки breakeven/trailing/time_stop)
+                        self.position_manager.update_position(symbol, current_price, current_size)
 
-                if self.mode == "live" and self.sl_tp_manager and data.get("d") is not None:
+                # 7. Проверяем SL/TP уровни и виртуальные триггеры (если в live mode)
 
-                    current_price = Decimal(str(data["d"].iloc[-1]["close"]))
+                if self.mode == "live" and self.sl_tp_manager and data.get("df") is not None:
 
-                    current_atr = data["d"].iloc[-1].get("atr")
+                    current_price = Decimal(str(df_with_features.iloc[-1]["close"]))
+
+                    current_atr = df_with_features.iloc[-1].get("atr")
 
                     # Проверяем все активные позиции на SL/TP триггеры
 
@@ -1915,7 +1931,7 @@ class TradingBot:
                     symbol=self.symbol,
                     timestamp=int(time.time()),
                     side=signal["signal"],  # "long" или "short"
-                    bucket_seconds=60,  # 1 минута - повторы в этом окне используют тот же ID
+                    bucket_seconds=5,  # 5 секунд - уменьшено для предотвращения коллизий
                 )
                 
                 logger.info(f"Generated orderLinkId: {order_link_id}")
@@ -2034,7 +2050,17 @@ class TradingBot:
                     # 8. Регистрируем позицию в PositionManager для сопровождения (если используется)
 
                     if self.position_manager:
-
+                        # Получаем partial exits конфиг из config.yaml
+                        partial_exit_levels = None
+                        if self.config.get("position_management.partial_exits.enabled", True):
+                            # Преобразуем из config формата в формат [(r_level, percent), ...]
+                            levels_config = self.config.get("position_management.partial_exits.levels", [])
+                            if levels_config:
+                                partial_exit_levels = [
+                                    (float(level["r_level"]), float(level["percent"]))
+                                    for level in levels_config
+                                ]
+                        
                         self.position_manager.register_position(
 
                             symbol=self.symbol,
@@ -2064,6 +2090,20 @@ class TradingBot:
                                 else signal.get("take_profit")
 
                             ),
+
+                            breakeven_trigger=float(self.config.get(
+                                "position_management.breakeven_trigger", 1.5
+                            )),
+                            
+                            trailing_offset_percent=float(self.config.get(
+                                "position_management.trailing_offset_percent", 1.0
+                            )),
+                            
+                            time_stop_minutes=int(self.config.get(
+                                "position_management.time_stop_minutes", 60
+                            )),
+                            
+                            partial_exit_levels=partial_exit_levels,
 
                         )
 
@@ -2100,6 +2140,71 @@ class TradingBot:
             except Exception as e:
 
                 logger.error(f"Error processing live signal: {e}", exc_info=True)
+
+    def _wait_for_order_fill(self, order_id: str, timeout_seconds: int = 30) -> bool:
+        """        
+        Ждёт исполнения ордера перед установкой SL/TP.
+        
+        Критично для предотвращения ошибки Bybit 110013:
+        "can not set tp/sl/ts for zero position"
+        
+        Args:
+            order_id: ID ордера
+            timeout_seconds: Максимальное время ожидания
+            
+        Returns:
+            True если ордер исполнен (Filled), False если timeout или ошибка
+        """
+        import time
+        
+        start_time = time.time()
+        check_interval = 0.5  # Проверяем каждые 500ms
+        
+        while time.time() - start_time < timeout_seconds:
+            try:
+                # Получаем статус ордера через REST API
+                from execution.order_result import OrderResult
+                
+                response = self.account_client.client.post(
+                    "/v5/order/realtime",
+                    params={
+                        "category": "linear",
+                        "symbol": self.symbol,
+                        "orderId": order_id,
+                    }
+                )
+                
+                result = OrderResult.from_api_response(response)
+                
+                if result.success:
+                    orders = result.raw.get("result", {}).get("list", [])
+                    if orders:
+                        order = orders[0]
+                        order_status = order.get("orderStatus", "")
+                        
+                        logger.debug(f"Order {order_id} status: {order_status}")
+                        
+                        # Ордер исполнен
+                        if order_status == "Filled":
+                            logger.info(f"✓ Order {order_id} filled successfully")
+                            return True
+                        
+                        # Ордер отменён или отклонён
+                        elif order_status in ["Cancelled", "Rejected", "Deactivated"]:
+                            logger.warning(f"Order {order_id} status: {order_status}")
+                            return False
+                        
+                        # Ещё в процессе (New, PartiallyFilled, Untriggered)
+                        # Продолжаем ждать
+                
+            except Exception as e:
+                logger.debug(f"Error checking order status: {e}")
+            
+            time.sleep(check_interval)
+        
+        # Timeout
+        logger.warning(f"Timeout waiting for order {order_id} to fill after {timeout_seconds}s")
+        return False
 
     def _update_metrics(self):
         """Обновить метрики и equity"""
