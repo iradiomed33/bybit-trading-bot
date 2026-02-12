@@ -153,49 +153,72 @@ class TechnicalIndicators:
 
                     minus_dm[i] = down
 
-            plus_di = 100 * (pd.Series(plus_dm).rolling(window=period).mean() / atr)
+            plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(window=period).mean() / atr)
 
-            minus_di = 100 * (pd.Series(minus_dm).rolling(window=period).mean() / atr)
+            minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(window=period).mean() / atr)
 
             dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 0.001)
 
-            adx = pd.Series(dx).rolling(window=period).mean()
+            adx = dx.rolling(window=period).mean()
 
-            df["adx"] = adx.values
+            df["adx"] = adx
 
-            df["dmp"] = plus_di.values
+            df["dmp"] = plus_di
 
-            df["dmn"] = minus_di.values
+            df["dmn"] = minus_di
 
         return df
 
     @staticmethod
     def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
         """ATR (Average True Range) - волатильность"""
+        
+        # Clean OHLC data from extreme outliers BEFORE calculation
+        # Prevents corrupted historical data (e.g. BTC=1.6M) from inflating ATR
+        high_clean = df["high"].clip(upper=df["high"].quantile(0.95))
+        low_clean = df["low"].clip(lower=df["low"].quantile(0.05))
+        close_clean = df["close"].clip(upper=df["close"].quantile(0.95))
 
         if USE_PANDAS_TA:
 
-            df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=period)
+            df["atr"] = ta.atr(high_clean, low_clean, close_clean, length=period)
 
         else:
 
-            high = df["high"].values
+            high = high_clean.values
+            low = low_clean.values
+            close = close_clean.values
 
-            low = df["low"].values
-
-            close = df["close"].values
-
+            # True Range calculation using pandas shift for correct handling
+            prev_close = close_clean.shift(1).values
+            
             tr1 = high - low
+            tr2 = np.abs(high - prev_close)
+            tr3 = np.abs(low - prev_close)
 
-            tr2 = np.abs(high - np.roll(close, 1))
-
-            tr3 = np.abs(low - np.roll(close, 1))
-
-            tr = np.maximum(tr1, np.maximum(tr2, tr3))
+            # Use fmax to ignore NaN in first element
+            tr = np.fmax(tr1, np.fmax(tr2, tr3))
 
             df["atr"] = pd.Series(tr, index=df.index).rolling(window=period).mean()
 
-        df["atr_percent"] = (df["atr"] / df["close"]) * 100
+        # Use cleaned close for percentage calculation
+        df["atr_percent"] = (df["atr"] / close_clean) * 100
+        
+        # Debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+        if len(df) > 0:
+            last_close = df["close"].iloc[-1]
+            last_high = df["high"].iloc[-1]
+            last_low = df["low"].iloc[-1]
+            last_atr = df["atr"].iloc[-1]
+            last_atr_pct = df["atr_percent"].iloc[-1]
+            # Log price range to detect anomalies
+            high_min = df["high"].min()
+            high_max = df["high"].max()
+            close_min = df["close"].min()
+            close_max = df["close"].max()
+            logger.info(f"ATR_CALC: close={last_close:.2f} (H={last_high:.2f}, L={last_low:.2f}), atr={last_atr:.2f}, atr%={last_atr_pct:.2f}% | PriceRange: close({close_min:.2f}-{close_max:.2f}), high({high_min:.2f}-{high_max:.2f})")
 
         return df
 
@@ -380,6 +403,34 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
+    def calculate_ema_distance(df: pd.DataFrame, ema_period: int = 20) -> pd.DataFrame:
+        """
+        Расчёт расстояния от цены до EMA в единицах ATR.
+        
+        Используется для EMA-router: pullback когда близко, breakout когда далеко.
+        
+        Args:
+            df: DataFrame с данными
+            ema_period: Период EMA для расчёта расстояния (по умолчанию 20)
+            
+        Returns:
+            DataFrame с добавленной колонкой ema_distance_atr
+        """
+        ema_col = f"ema_{ema_period}"
+        
+        if ema_col not in df.columns or "atr" not in df.columns or "close" not in df.columns:
+            df["ema_distance_atr"] = float("nan")
+            return df
+        
+        # Расстояние = |close - EMA| / ATR
+        df["ema_distance_atr"] = (df["close"] - df[ema_col]).abs() / df["atr"]
+        
+        # Обработка случаев с нулевым ATR
+        df.loc[df["atr"] == 0, "ema_distance_atr"] = float("nan")
+        
+        return df
+
+    @staticmethod
     def calculate_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
         """Расчёт всех индикаторов"""
 
@@ -404,6 +455,9 @@ class TechnicalIndicators:
             df = TechnicalIndicators.calculate_volume_features(df)
 
             df = TechnicalIndicators.detect_market_structure(df)
+            
+            # EMA-router metric: расстояние до EMA в единицах ATR
+            df = TechnicalIndicators.calculate_ema_distance(df)
 
             return df
 

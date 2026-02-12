@@ -913,7 +913,7 @@ async def get_signal_logs(
 
         return {
             "status": "success",
-            "data": events,
+            "data": _sanitize_for_json(events),
             "file": str(log_file),
             "count": len(events),
             "limit": limit,
@@ -925,6 +925,30 @@ async def get_signal_logs(
     except Exception as e:
         logger.error(f"Failed to get signal logs: {e}")
         return {"status": "error", "error": str(e), "data": []}
+
+
+def _sanitize_for_json(obj):
+    """
+    Рекурсивно заменяет NaN и Infinity на None для безопасной JSON сериализации.
+    
+    Args:
+        obj: Объект для обработки (dict, list, float, или другое)
+        
+    Returns:
+        Обработанный объект с NaN/Inf замененными на None
+    """
+    import math
+    
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    else:
+        return obj
 
 
 def _parse_legacy_log(line: str, parts: list) -> Dict[str, Any]:
@@ -2027,6 +2051,133 @@ async def logout(authorization: Optional[str] = None):
         "message": "Logged out successfully",
 
     }
+
+
+# ============================================================================
+# BOT INTROSPECTION ENDPOINTS (for E2E testing)
+# ============================================================================
+
+@app.get("/api/bot/effective-config")
+async def get_effective_config():
+    """
+    Получить эффективную конфигурацию бота в runtime
+    
+    Возвращает:
+    - Фактический конфиг, который бот сейчас использует (после merge env/defaults/ui)
+    - config_version для отслеживания изменений
+    - updated_at для временной метки
+    
+    Это критично для E2E тестов, чтобы проверить, что настройки UI реально применяются ботом.
+    """
+    try:
+        cfg = get_config()
+        config_dict = cfg.to_dict()
+        
+        # Добавляем метаданные для отслеживания версий
+        effective_config = {
+            "config": config_dict,
+            "config_version": cfg.get("_version", 1),  # Инкрементируется при каждом update
+            "updated_at": cfg.get("_updated_at", datetime.now().isoformat()),
+            "config_path": cfg.config_path,
+        }
+        
+        # Если бот запущен, добавляем информацию о runtime состоянии
+        if bot_instance:
+            effective_config["bot_runtime"] = {
+                "is_running": bot_instance.is_running,
+                "mode": bot_instance.mode,
+                "symbol": bot_instance.symbol,
+                "testnet": bot_instance.testnet,
+            }
+        
+        return {
+            "status": "success",
+            "data": effective_config,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get effective config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bot/last-order-intent")
+async def get_last_order_intent():
+    """
+    Получить последнее решение бота (order intent)
+    
+    Возвращает что бот пытался сделать:
+    - leverage
+    - SL/TP levels
+    - qty
+    - risk inputs
+    - regime/strategy
+    
+    Идеально для проверки влияния advanced-настроек на торговые действия.
+    В dry-run режиме бот формирует intents, но не размещает реальные ордера.
+    """
+    try:
+        db = Database()
+        
+        # Получаем последний order intent из БД
+        # (Intent сохраняется перед отправкой ордера)
+        last_intent = db.get_last_order_intent()
+        
+        if not last_intent:
+            return {
+                "status": "success",
+                "data": None,
+                "message": "No order intents found",
+            }
+        
+        return {
+            "status": "success",
+            "data": last_intent,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get last order intent: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/run-once")
+async def run_bot_once():
+    """
+    Запустить один цикл бота в тестовом режиме (dry-run)
+    
+    Бот:
+    - Проходит весь пайплайн стратегии/риска
+    - Формирует order intent
+    - НЕ отправляет в реальную биржу (dry-run)
+    - Пишет intent в БД и отдаёт через /api/bot/last-order-intent
+    
+    Это ключевой endpoint для E2E тестов:
+    - Позволяет проверить влияние настроек UI на решения бота
+    - Безопасно (не размещает реальные ордера)
+    - Детерминированно (один тик = один результат)
+    """
+    try:
+        if not bot_instance:
+            raise HTTPException(status_code=400, detail="Bot is not initialized")
+        
+        # Устанавливаем флаг dry-run для одного тика
+        original_dry_run = getattr(bot_instance, '_dry_run_mode', False)
+        bot_instance._dry_run_mode = True
+        
+        # Запускаем один тик бота
+        logger.info("[RUN_ONCE] Executing single bot tick in dry-run mode")
+        
+        # Запускаем один цикл обработки
+        result = await bot_instance.run_single_tick()
+        
+        # Восстанавливаем оригинальный режим
+        bot_instance._dry_run_mode = original_dry_run
+        
+        return {
+            "status": "success",
+            "message": "Bot tick completed in dry-run mode",
+            "data": result,
+        }
+    except Exception as e:
+        logger.error(f"Failed to run bot once: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

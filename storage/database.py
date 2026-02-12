@@ -396,6 +396,35 @@ class Database:
 
         )
 
+        # Таблица order intents (для E2E тестов и dry-run режима)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS order_intents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,  -- 'Buy', 'Sell'
+                order_type TEXT NOT NULL,  -- 'Market', 'Limit'
+                qty TEXT,  -- Decimal as string
+                price TEXT,  -- Decimal as string
+                leverage INTEGER,
+                stop_loss TEXT,  -- Decimal as string
+                take_profit TEXT,  -- Decimal as string
+                strategy TEXT,
+                regime TEXT,  -- 'Trending', 'Ranging', 'HighVol'
+                risk_percent REAL,
+                atr_value REAL,
+                sl_atr_mult REAL,
+                tp_atr_mult REAL,
+                no_trade_zone_enabled INTEGER,  -- 0/1
+                mtf_score REAL,
+                dry_run INTEGER DEFAULT 1,  -- 1 = dry-run, 0 = real
+                metadata TEXT,  -- JSON с дополнительной информацией
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
         self.conn.commit()
 
         logger.info("Database schema initialized")
@@ -1058,6 +1087,183 @@ class Database:
         exec_id = cursor.lastrowid
         logger.debug(f"Execution saved: {exec_data.get('execId')}")
         return exec_id
+
+    def save_order_intent(self, intent_data: Dict[str, Any]) -> int:
+        """
+        Сохранить order intent (намерение разместить ордер).
+        
+        Используется для:
+        - Dry-run режима (бот не размещает реальный ордер, но сохраняет intent)
+        - E2E тестов (проверка что настройки влияют на решения бота)
+        - Аудит логики (что бот хотел сделать)
+        
+        Args:
+            intent_data: Dict with order intent details
+                {
+                    "symbol": str,
+                    "side": str,  # "Buy" or "Sell"
+                    "order_type": str,  # "Market" or "Limit"
+                    "qty": str,  # Decimal as string
+                    "price": str,  # Decimal as string (optional for Market)
+                    "leverage": int,
+                    "stop_loss": str,  # Decimal as string
+                    "take_profit": str,  # Decimal as string
+                    "strategy": str,
+                    "regime": str,  # "Trending", "Ranging", "HighVol"
+                    "risk_percent": float,
+                    "atr_value": float,
+                    "sl_atr_mult": float,
+                    "tp_atr_mult": float,
+                    "no_trade_zone_enabled": bool,
+                    "mtf_score": float,
+                    "dry_run": bool,
+                    "metadata": dict,
+                }
+                
+        Returns:
+            Intent DB ID
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO order_intents
+            (timestamp, symbol, side, order_type, qty, price, leverage,
+             stop_loss, take_profit, strategy, regime, risk_percent,
+             atr_value, sl_atr_mult, tp_atr_mult, no_trade_zone_enabled,
+             mtf_score, dry_run, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().timestamp(),
+                intent_data.get("symbol"),
+                intent_data.get("side"),
+                intent_data.get("order_type"),
+                str(intent_data.get("qty", "")),
+                str(intent_data.get("price", "")),
+                intent_data.get("leverage"),
+                str(intent_data.get("stop_loss", "")),
+                str(intent_data.get("take_profit", "")),
+                intent_data.get("strategy"),
+                intent_data.get("regime"),
+                intent_data.get("risk_percent"),
+                intent_data.get("atr_value"),
+                intent_data.get("sl_atr_mult"),
+                intent_data.get("tp_atr_mult"),
+                1 if intent_data.get("no_trade_zone_enabled") else 0,
+                intent_data.get("mtf_score"),
+                1 if intent_data.get("dry_run", True) else 0,
+                json.dumps(intent_data.get("metadata", {})),
+            ),
+        )
+        self.conn.commit()
+        intent_id = cursor.lastrowid
+        logger.debug(f"Order intent saved: {intent_data.get('side')} {intent_data.get('symbol')} (dry_run={intent_data.get('dry_run', True)})")
+        return intent_id
+
+    def get_last_order_intent(self, symbol: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Получить последний order intent.
+        
+        Args:
+            symbol: Фильтр по символу (опционально)
+            
+        Returns:
+            Dict с данными intent или None
+        """
+        cursor = self.conn.cursor()
+        
+        if symbol:
+            cursor.execute(
+                """
+                SELECT * FROM order_intents
+                WHERE symbol = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """,
+                (symbol,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT * FROM order_intents
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            )
+        
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        # Преобразуем sqlite3.Row в dict
+        intent = dict(row)
+        
+        # Парсим metadata JSON
+        if intent.get("metadata"):
+            try:
+                intent["metadata"] = json.loads(intent["metadata"])
+            except json.JSONDecodeError:
+                intent["metadata"] = {}
+        
+        # Конвертируем boolean flags
+        intent["no_trade_zone_enabled"] = bool(intent.get("no_trade_zone_enabled"))
+        intent["dry_run"] = bool(intent.get("dry_run"))
+        
+        return intent
+
+    def get_order_intents(self, limit: int = 100, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Получить список order intents.
+        
+        Args:
+            limit: Максимальное количество
+            symbol: Фильтр по символу (опционально)
+            
+        Returns:
+            Список Dict с данными intents
+        """
+        cursor = self.conn.cursor()
+        
+        if symbol:
+            cursor.execute(
+                """
+                SELECT * FROM order_intents
+                WHERE symbol = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (symbol, limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT * FROM order_intents
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        
+        rows = cursor.fetchall()
+        intents = []
+        
+        for row in rows:
+            intent = dict(row)
+            
+            # Парсим metadata JSON
+            if intent.get("metadata"):
+                try:
+                    intent["metadata"] = json.loads(intent["metadata"])
+                except json.JSONDecodeError:
+                    intent["metadata"] = {}
+            
+            # Конвертируем boolean flags
+            intent["no_trade_zone_enabled"] = bool(intent.get("no_trade_zone_enabled"))
+            intent["dry_run"] = bool(intent.get("dry_run"))
+            
+            intents.append(intent)
+        
+        return intents
 
     def close(self):
         """

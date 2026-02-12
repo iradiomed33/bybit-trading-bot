@@ -171,6 +171,13 @@ class BybitRestClient:
             hashlib.sha256,
 
         ).hexdigest()
+        
+        # Логирование для отладки (только первые/последние символы для безопасности)
+        logger.debug(
+            f"Sign: method={method}, ts={timestamp}, "
+            f"param_str_len={len(param_str)}, "
+            f"sig={signature[:8]}...{signature[-8:]}"
+        )
 
         return signature
 
@@ -278,9 +285,10 @@ class BybitRestClient:
 
             if method.upper() == "GET":
 
-                # GET: сортируем параметры в URL-encoded строку
-
-                query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+                # GET: сортируем параметры в URL-encoded query string
+                # ВАЖНО: используем urllib.parse.urlencode для правильного кодирования
+                from urllib.parse import urlencode
+                query_string = urlencode(sorted(params.items()))
 
                 signature = self.sign_request(
 
@@ -293,13 +301,19 @@ class BybitRestClient:
                     timestamp=timestamp,
 
                 )
+                
+                # Формируем полный URL с query string ДО отправки
+                # чтобы подписанная строка совпадала с реально отправляемой
+                if query_string:
+                    url = f"{url}?{query_string}"
+                
                 body_string = None
 
             else:
 
                 # POST/PUT/DELETE: используем raw JSON body для подписи
-
-                body_string = json.dumps(params, separators=(",", ":"))
+                # ВАЖНО: separators=(",", ":") без пробелов, ensure_ascii=False для Unicode
+                body_string = json.dumps(params, separators=(",", ":"), ensure_ascii=False)
 
                 signature = self.sign_request(
 
@@ -332,7 +346,7 @@ class BybitRestClient:
             )
             
             # Для POST запросов добавляем Content-Type
-            if method.upper() != "GET" and body_string:
+            if method.upper() != "GET":
                 headers["Content-Type"] = "application/json"
 
         # Retry логика
@@ -345,13 +359,20 @@ class BybitRestClient:
 
                 if method.upper() == "GET":
 
-                    response = self.session.get(url, params=params, headers=headers)
+                    # GET: URL уже содержит query string, не передаем params
+                    # Для несподписанных запросов добавляем params к URL
+                    if not signed and params:
+                        from urllib.parse import urlencode
+                        query_string = urlencode(sorted(params.items()))
+                        url = f"{self.base_url}{endpoint}?{query_string}"
+                    
+                    logger.debug(f"GET request: {url}")
+                    response = self.session.get(url, headers=headers)
 
                 elif method.upper() == "POST":
 
-                    # ВАЖНО: отправляем JSON body для подписи и передачи!
-
-                    response = self.session.post(url, json=params, headers=headers)
+                    # POST: отправляем точную строку body_string, которую подписали
+                    response = self.session.post(url, data=body_string, headers=headers)
 
                 else:
 
@@ -369,6 +390,22 @@ class BybitRestClient:
 
                 if ret_code != 0:
 
+                    # Логируем детали для отладки auth ошибок
+                    if ret_code in [10001, 10003, 10004]:  # Auth errors
+                        logger.error(
+                            f"Authentication error: retCode={ret_code}, retMsg={ret_msg}"
+                        )
+                        logger.error(f"Endpoint: {endpoint}")
+                        logger.error(f"Method: {method}")
+                        if signed:
+                            logger.error(f"Headers sent: X-BAPI-API-KEY={headers.get('X-BAPI-API-KEY', 'N/A')[:10]}...")
+                            logger.error(f"Timestamp: {headers.get('X-BAPI-TIMESTAMP', 'N/A')}")
+                            logger.error(f"Signature: {headers.get('X-BAPI-SIGN', 'N/A')[:16]}...")
+                            if method.upper() == "GET":
+                                logger.error(f"Query string in URL: {url.split('?')[1] if '?' in url else 'EMPTY'}")
+                            else:
+                                logger.error(f"Body sent: {body_string[:200] if body_string else 'EMPTY'}")
+                    
                     logger.error(
 
                         f"API error: retCode={ret_code}, retMsg={ret_msg}, endpoint={endpoint}, params={params}"

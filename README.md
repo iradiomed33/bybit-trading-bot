@@ -21,6 +21,34 @@ python cli.py live
 python -m examples.validate_sample_strategy
 ```
 
+## 🧪 E2E Testing
+
+**TASK-QA-UI-SETTINGS-001** ✅ Автотесты UI настроек
+
+Гарантирует что настройки UI **реально** влияют на бота:
+
+```bash
+# Quick start (Windows)
+.\run_e2e_tests.bat
+
+# Quick start (Linux/Mac)
+./run_e2e_tests.sh
+
+# Или вручную
+cd tests/e2e
+npm install
+npx playwright install
+npm test
+```
+
+**Что тестируется:**
+- ✅ Basic settings → runtime config (leverage, SL/TP, risk)
+- ✅ Advanced settings → order intent (ATR mult, MTF, no-trade zones)
+- ✅ Validation logic (недопустимые значения блокируются)
+- ✅ Dry-run mode (без реальных ордеров)
+
+Подробнее: [tests/e2e/README.md](tests/e2e/README.md)
+
 ## 🎓 EPIC V: Validation — Stop Trusting By Eye
 
 **VAL-001 | Unified Validation Pipeline** ✅ Production Ready

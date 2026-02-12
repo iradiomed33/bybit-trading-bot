@@ -62,6 +62,29 @@
       "240m",
       "D"
     ],
+    "mtf_score_threshold": 0.6,
+    "high_vol_event_atr_pct": 7.0,
+    "regime_switching": {
+      "adx_trend_threshold": 25.0,
+      "adx_range_threshold": 20.0,
+      "bb_width_range_threshold": 0.03,
+      "atr_slope_threshold": 0.5,
+      "high_vol_atr_threshold": 3.0
+    },
+    "ema_router": {
+      "enabled": true,
+      "ema_period": 20,
+      "near_atr": 0.7,
+      "far_atr": 1.2,
+      "hysteresis_atr": 0.1,
+      "regime_strategies": {
+        "trend_up": ["TrendPullback", "Breakout"],
+        "trend_down": ["TrendPullback", "Breakout"],
+        "range": ["MeanReversion"]
+      },
+      "near_strategies": ["TrendPullback"],
+      "far_strategies": ["Breakout"]
+    },
     "volatility_filter_enabled": true,
     "volatility_threshold": 0.02,
     "no_trade_hours": []

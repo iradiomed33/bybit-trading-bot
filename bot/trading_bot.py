@@ -153,11 +153,28 @@ class TradingBot:
 
             # Устанавливаем leverage из конфига
             try:
-                lev = str(int(float(self.config.get("risk_management.max_leverage", 10))))
-                self.account_client.set_leverage(category="linear", symbol=self.symbol, buy_leverage=lev, sell_leverage=lev)
-                logger.info(f"[CONFIG] set_leverage applied: {self.symbol} -> {lev}x")
+                lev = int(float(self.config.get("risk_management.max_leverage", 10)))
+                
+                # ЗАЩИТА: Testnet Bybit часто имеет низкие лимиты leverage
+                # Для XRPUSDT макс 75x, для BTC/ETH обычно 100x
+                max_safe_lev = 50 if testnet else 100
+                if lev > max_safe_lev:
+                    logger.warning(f"[CONFIG] Leverage {lev}x > safe limit {max_safe_lev}x for {'testnet' if testnet else 'mainnet'}, capping to {max_safe_lev}x")
+                    lev = max_safe_lev
+                
+                # Минимальный leverage = 1
+                lev = max(1, min(lev, max_safe_lev))
+                lev_str = str(lev)
+                
+                logger.info(f"[CONFIG] Attempting set_leverage: {self.symbol} -> {lev_str}x (from config: {self.config.get('risk_management.max_leverage', 10)})")
+                self.account_client.set_leverage(category="linear", symbol=self.symbol, buy_leverage=lev_str, sell_leverage=lev_str)
+                logger.info(f"[CONFIG] ✓ set_leverage success: {self.symbol} -> {lev_str}x")
             except Exception as e:
+                # Логируем детали для отладки
                 logger.warning(f"[CONFIG] set_leverage failed for {self.symbol}: {e}")
+                if "110013" in str(e):
+                    logger.warning(f"[CONFIG] Leverage limit exceeded for {self.symbol} on {'testnet' if testnet else 'mainnet'}")
+                    logger.warning(f"[CONFIG] Try lowering risk_management.max_leverage in config (current: {self.config.get('risk_management.max_leverage')})")
 
         # Инициализируем менеджер инструментов для нормализации ордеров
 
@@ -361,6 +378,7 @@ class TradingBot:
         high_vol_event_atr_pct = float(self.config.get("meta_layer.high_vol_event_atr_pct", 7.0))
         no_trade_zone_max_atr_pct = float(self.config.get("no_trade_zone.max_atr_pct", 14.0))
         no_trade_zone_max_spread_pct = float(self.config.get("no_trade_zone.max_spread_pct", 0.50))
+        ema_router_config = self.config.get("meta_layer.ema_router", {})
         
         self.meta_layer = MetaLayer(
             strategies,
@@ -369,6 +387,7 @@ class TradingBot:
             high_vol_event_atr_pct=high_vol_event_atr_pct,
             no_trade_zone_max_atr_pct=no_trade_zone_max_atr_pct,
             no_trade_zone_max_spread_pct=no_trade_zone_max_spread_pct,
+            ema_router_config=ema_router_config,
         )
 
 
@@ -818,6 +837,14 @@ class TradingBot:
 
             kline_interval = str(self.config.get("market_data.kline_interval", "60"))
             kline_limit = int(self.config.get("market_data.kline_limit", 500))
+            
+            # Валидация интервала (Bybit V5 требует строгий формат)
+            valid_intervals = ["1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "M", "W"]
+            if kline_interval not in valid_intervals:
+                logger.warning(f"Invalid kline_interval '{kline_interval}', using '60' (1h)")
+                kline_interval = "60"
+            
+            logger.debug(f"Fetching kline: symbol={self.symbol}, interval={kline_interval} (type: {type(kline_interval)}), limit={kline_limit}")
 
             try:
 
@@ -2216,6 +2243,151 @@ class TradingBot:
             },
 
         }
+
+    async def run_single_tick(self) -> Dict[str, Any]:
+        """
+        Запустить один цикл обработки бота (для E2E тестов).
+        
+        Выполняет те же шаги что и run(), но:
+        - Один тик вместо бесконечного цикла
+        - Может работать в dry-run режиме (_dry_run_mode=True)
+        - Возвращает результат вместо сохранения ордера
+        - Сохраняет order intent в БД для проверки в тестах
+        
+        Returns:
+            Dict с результатами тика:
+            {
+                "status": "success" | "no_signal" | "error",
+                "signal": {...} if есть сигнал,
+                "order_intent": {...} if сигнал привел к намерению открыть ордер,
+                "message": str
+            }
+        """
+        logger.info("[RUN_SINGLE_TICK] Starting single tick execution")
+        
+        try:
+            # 1. Получаем данные
+            data = self._fetch_market_data()
+            
+            if not data:
+                return {
+                    "status": "error",
+                    "message": "Failed to fetch market data",
+                }
+            
+            # 2. Строим фичи
+            orderbook_sanity_max_deviation_pct = float(
+                self.config.get("market_data.orderbook_sanity_max_deviation_pct", 3.0)
+            )
+            
+            df_with_features = self.pipeline.build_features(
+                data["df"],
+                orderbook=data.get("orderbook"),
+                orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
+            )
+            
+            features = data.get("orderflow_features", {})
+            features["symbol"] = self.symbol
+            
+            # Извлекаем orderflow features из последней строки
+            import pandas as pd
+            latest_row = df_with_features.iloc[-1]
+            for key in ["spread_percent", "depth_imbalance", "liquidity_concentration", "midprice"]:
+                if key not in features or features.get(key) is None:
+                    if key in latest_row.index and pd.notna(latest_row[key]):
+                        features[key] = float(latest_row[key])
+            
+            # 3. Проверяем circuit breaker
+            if not self.circuit_breaker.is_trading_allowed():
+                return {
+                    "status": "no_signal",
+                    "message": f"Trading halted by circuit breaker: {self.circuit_breaker.break_reason}",
+                }
+            
+            # 4. Получаем сигнал от стратегий
+            features["is_testnet"] = bool(self.testnet)
+            features["allow_anomaly_on_testnet"] = bool(
+                self.config.get("meta_layer.allow_anomaly_on_testnet", True)
+            )
+            
+            signal = self.meta_layer.get_signal(df_with_features, features)
+            
+            if not signal:
+                return {
+                    "status": "no_signal",
+                    "message": "No strategy triggered",
+                }
+            
+            logger.info(f"[RUN_SINGLE_TICK] Signal generated: {signal.get('signal')} by {signal.get('strategy')}")
+            
+            # 5. Формируем order intent
+            # (В dry-run режиме не размещаем реальный ордер, только сохраняем intent)
+            
+            current_price = Decimal(str(latest_row["close"]))
+            atr_value = latest_row.get("atr", 0)
+            
+            # Получаем конфиг для расчёта SL/TP
+            sl_atr_mult = self.config.get("stop_loss_tp.sl_atr_multiplier", 1.5)
+            tp_atr_mult = self.config.get("stop_loss_tp.tp_atr_multiplier", 2.0)
+            leverage = int(float(self.config.get("risk_management.max_leverage", 10)))
+            risk_percent = self.config.get("risk_management.position_risk_percent", 1.0)
+            
+            # Рассчитываем SL/TP
+            if signal["signal"] == "long":
+                sl_price = current_price - Decimal(str(atr_value * sl_atr_mult))
+                tp_price = current_price + Decimal(str(atr_value * tp_atr_mult))
+            else:  # short
+                sl_price = current_price + Decimal(str(atr_value * sl_atr_mult))
+                tp_price = current_price - Decimal(str(atr_value * tp_atr_mult))
+            
+            # Определяем qty (упрощённо для теста)
+            # В реальной торговле qty рассчитывается через risk manager
+            qty = Decimal("0.001")  # Минимальный размер для тестов
+            
+            # Формируем order intent
+            order_intent = {
+                "symbol": self.symbol,
+                "side": "Buy" if signal["signal"] == "long" else "Sell",
+                "order_type": "Market",
+                "qty": str(qty),
+                "price": str(current_price),
+                "leverage": leverage,
+                "stop_loss": str(sl_price),
+                "take_profit": str(tp_price),
+                "strategy": signal.get("strategy", "Unknown"),
+                "regime": signal.get("regime", "Unknown"),
+                "risk_percent": risk_percent,
+                "atr_value": float(atr_value),
+                "sl_atr_mult": sl_atr_mult,
+                "tp_atr_mult": tp_atr_mult,
+                "no_trade_zone_enabled": self.config.get("meta_layer.no_trade_zone_enabled", True),
+                "mtf_score": signal.get("mtf_score", 0),
+                "dry_run": getattr(self, "_dry_run_mode", True),
+                "metadata": {
+                    "confidence": signal.get("confidence", 0),
+                    "reasons": signal.get("reasons", []),
+                    "values": signal.get("values", {}),
+                },
+            }
+            
+            # Сохраняем intent в БД
+            intent_id = self.db.save_order_intent(order_intent)
+            logger.info(f"[RUN_SINGLE_TICK] Order intent saved (ID={intent_id})")
+            
+            return {
+                "status": "success",
+                "signal": signal,
+                "order_intent": order_intent,
+                "intent_id": intent_id,
+                "message": f"Order intent generated: {order_intent['side']} {order_intent['symbol']}",
+            }
+            
+        except Exception as e:
+            logger.error(f"[RUN_SINGLE_TICK] Error: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": str(e),
+            }
 
     def stop(self):
         """Остановить бота"""

@@ -54,6 +54,13 @@ class ConfigManager:
         self.defaults: Dict[str, Any] = {}
 
         self._load_config()
+        
+        # Инициализация метаданных для отслеживания версий (для E2E тестов)
+        if "_version" not in self.config:
+            self.config["_version"] = 1
+        if "_updated_at" not in self.config:
+            from datetime import datetime
+            self.config["_updated_at"] = datetime.now().isoformat()
 
     def _load_config(self):
         """Загрузить конфигурацию из JSON файла"""
@@ -204,6 +211,34 @@ class ConfigManager:
                     "atr_slope_threshold": 0.5,
 
                     "high_vol_atr_threshold": 3.0,
+
+                },
+                
+                "ema_router": {
+
+                    "enabled": True,
+
+                    "ema_period": 20,
+
+                    "near_atr": 0.7,  # ema_distance_atr ≤ 0.7 → активен TrendPullback Логика: цена близко к EMA, ждём отката
+
+                    "far_atr": 1.2,   # ema_distance_atr ≥ 1.2 → активен Breakout Логика: цена "убежала" от EMA, сильный тренд
+
+                    "hysteresis_atr": 0.1,
+
+                    "regime_strategies": {
+
+                        "trend_up": ["TrendPullback", "Breakout"],
+
+                        "trend_down": ["TrendPullback", "Breakout"],
+
+                        "range": ["MeanReversion"],
+
+                    },
+
+                    "near_strategies": ["TrendPullback"],
+
+                    "far_strategies": ["Breakout"],
 
                 },
 
@@ -413,6 +448,10 @@ class ConfigManager:
         save_path = path or self.config_path
 
         try:
+            # Обновляем версию и timestamp при каждом сохранении
+            from datetime import datetime
+            self.config["_version"] = self.config.get("_version", 0) + 1
+            self.config["_updated_at"] = datetime.now().isoformat()
 
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -420,7 +459,7 @@ class ConfigManager:
 
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"Config saved: {save_path}")
+            logger.info(f"Config saved: {save_path} (version {self.config['_version']})")
 
             return True
 

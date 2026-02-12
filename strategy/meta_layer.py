@@ -473,6 +473,8 @@ class MetaLayer:
         no_trade_zone_max_atr_pct: float = 14.0,
         
         no_trade_zone_max_spread_pct: float = 0.50,
+        
+        ema_router_config: Optional[Dict[str, Any]] = None,
 
     ):
         """
@@ -490,6 +492,8 @@ class MetaLayer:
             no_trade_zone_max_atr_pct: Максимальный ATR% для торговли
             
             no_trade_zone_max_spread_pct: Максимальный спред% для торговли
+            
+            ema_router_config: Конфигурация EMA-router для выбора pullback/breakout
 
         """
 
@@ -509,6 +513,10 @@ class MetaLayer:
         self.mtf_score_threshold = mtf_score_threshold
         
         self.high_vol_event_atr_pct = high_vol_event_atr_pct
+        
+        # EMA-router: выбор между pullback/breakout по расстоянию до EMA
+        self.ema_router_config = ema_router_config or {}
+        self._ema_route_state = None  # "near" | "far" | None (для гистерезиса)
 
         self.timeframe_cache = TimeframeCache() if use_mtf else None
 
@@ -518,7 +526,9 @@ class MetaLayer:
 
             f"(MTF: {use_mtf}, mtf_score_threshold={mtf_score_threshold}, "
             
-            f"high_vol_event_atr_pct={high_vol_event_atr_pct})"
+            f"high_vol_event_atr_pct={high_vol_event_atr_pct}, "
+            
+            f"ema_router={'enabled' if self.ema_router_config.get('enabled') else 'disabled'})"
 
         )
 
@@ -601,9 +611,9 @@ class MetaLayer:
 
         # Логируем только при смене режима
 
-        # 3. Включаем/выключаем стратегии по режиму
+        # 3. Включаем/выключаем стратегии по режиму (+ EMA-router)
 
-        self._adjust_strategies_by_regime(regime)
+        self._adjust_strategies_by_regime(regime, df)
 
         # 4. Собираем сигналы от всех активных стратегий
 
@@ -638,6 +648,14 @@ class MetaLayer:
         if not signals:
 
             latest = df.iloc[-1]
+            
+            # Безопасное извлечение ema_distance_atr (NaN -> None для JSON)
+            import math
+            ema_dist_raw = latest.get("ema_distance_atr")
+            if ema_dist_raw is not None and not (isinstance(ema_dist_raw, float) and (math.isnan(ema_dist_raw) or math.isinf(ema_dist_raw))):
+                ema_dist = round(ema_dist_raw, 2)
+            else:
+                ema_dist = None
 
             signal_logger.log_debug_info(
 
@@ -656,6 +674,10 @@ class MetaLayer:
                     "volume_z": round(latest.get("volume_zscore", 0), 2),
 
                     "atr": round(latest.get("atr", 0), 4),
+
+                    "ema_distance_atr": ema_dist,
+
+                    "ema_route_state": self._ema_route_state,
 
                 },
 
@@ -848,8 +870,122 @@ class MetaLayer:
 
             self.timeframe_cache.add_candle(timeframe, candle)
 
-    def _adjust_strategies_by_regime(self, regime: str):
-        """Включить/выключить стратегии в зависимости от режима"""
+    def _route_by_ema_distance(self, candidates: List[str], df: pd.DataFrame) -> List[str]:
+        """
+        EMA-router: выбор между pullback/breakout на основе расстояния до EMA.
+        
+        Логика:
+        - Если цена близко к EMA (<= near_atr) → предпочитаем pullback
+        - Если цена далеко от EMA (>= far_atr) → предпочитаем breakout
+        - В середине → возвращаем всех кандидатов (или используем гистерезис)
+        
+        Args:
+            candidates: Список кандидатов-стратегий для текущего режима
+            df: DataFrame с индикаторами (должен содержать ema_distance_atr)
+            
+        Returns:
+            Отфильтрованный список стратегий
+        """
+        import math
+        
+        # Если роутер выключен или нет кандидатов
+        if not self.ema_router_config.get("enabled", False) or not candidates:
+            return candidates
+        
+        # Получаем параметры
+        near_atr = self.ema_router_config.get("near_atr", 0.7)
+        far_atr = self.ema_router_config.get("far_atr", 1.2)
+        hys = self.ema_router_config.get("hysteresis_atr", 0.1)
+        near_strategies = set(self.ema_router_config.get("near_strategies", []))
+        far_strategies = set(self.ema_router_config.get("far_strategies", []))
+        
+        # Получаем метрику
+        if df is None or df.empty:
+            return candidates
+            
+        latest = df.iloc[-1]
+        ema_dist = latest.get("ema_distance_atr")
+        
+        # Деградация если метрика не готова
+        if ema_dist is None or (isinstance(ema_dist, float) and (math.isnan(ema_dist) or math.isinf(ema_dist))):
+            logger.debug("EMA-router: ema_distance_atr not available, returning all candidates")
+            return candidates
+        
+        # Применяем гистерезис на основе последнего состояния
+        near_threshold = near_atr
+        far_threshold = far_atr
+        
+        if self._ema_route_state == "near":
+            # Был near → требуем +hys чтобы переключиться на far
+            far_threshold += hys
+        elif self._ema_route_state == "far":
+            # Был far → требуем -hys чтобы переключиться на near
+            near_threshold -= hys
+        
+        # Принимаем решение
+        if ema_dist <= near_threshold:
+            self._ema_route_state = "near"
+            filtered = [s for s in candidates if s in near_strategies]
+            logger.debug(
+                f"EMA-router: NEAR (ema_dist={ema_dist:.2f} <= {near_threshold:.2f}) "
+                f"→ {filtered or candidates}"
+            )
+            return filtered or candidates  # Fallback если нет совпадений
+        
+        elif ema_dist >= far_threshold:
+            self._ema_route_state = "far"
+            filtered = [s for s in candidates if s in far_strategies]
+            logger.debug(
+                f"EMA-router: FAR (ema_dist={ema_dist:.2f} >= {far_threshold:.2f}) "
+                f"→ {filtered or candidates}"
+            )
+            return filtered or candidates
+        
+        else:
+            # Средняя зона - оставляем всех кандидатов или последнее состояние
+            self._ema_route_state = None
+            logger.debug(
+                f"EMA-router: MID (ema_dist={ema_dist:.2f} in [{near_threshold:.2f}, {far_threshold:.2f}]) "
+                f"→ all candidates"
+            )
+            return candidates
+
+    def _adjust_strategies_by_regime(self, regime: str, df: Optional[pd.DataFrame] = None):
+        """Включить/выключить стратегии в зависимости от режима и EMA-router"""
+        
+        # Получаем кандидатов из конфига EMA-router (если есть) или используем старую логику
+        if self.ema_router_config.get("enabled", False):
+            regime_strategies = self.ema_router_config.get("regime_strategies", {})
+            candidates = regime_strategies.get(regime, [])
+            
+            # Применяем EMA-router
+            active_strategy_names = self._route_by_ema_distance(candidates, df)
+        else:
+            # Старая логика (обратная совместимость)
+            active_strategy_names = self._get_legacy_strategy_names(regime)
+        
+        # Включаем/выключаем стратегии
+        for strategy in self.strategies:
+
+            if strategy.name in active_strategy_names:
+                strategy.enable()
+            else:
+                strategy.disable()
+    
+    def _get_legacy_strategy_names(self, regime: str) -> List[str]:
+        """Старая логика выбора стратегий по режиму (обратная совместимость)"""
+        active = []
+
+        if regime in ["trend_up", "trend_down"]:
+            active.append("TrendPullback")
+        
+        if regime == "range":
+            active.extend(["Breakout", "MeanReversion"])
+        
+        return active
+
+    def _adjust_strategies_by_regime_old(self, regime: str):
+        """DEPRECATED: старая версия, оставлена для справки"""
 
         for strategy in self.strategies:
 

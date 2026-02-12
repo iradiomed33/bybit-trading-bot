@@ -35,6 +35,47 @@ from logger import setup_logger
 logger = setup_logger(__name__)
 
 
+# Fallback значения для популярных символов (если instruments-info не работает на testnet)
+DEFAULT_INSTRUMENT_PARAMS = {
+    "BTCUSDT": {
+        "tickSize": "0.1",
+        "qtyStep": "0.001",
+        "minOrderQty": "0.001",
+        "maxOrderQty": "100.0",
+        "minNotional": "5.0",
+        "basePrecision": 3,
+        "quotePrecision": 1,
+    },
+    "ETHUSDT": {
+        "tickSize": "0.01",
+        "qtyStep": "0.01",
+        "minOrderQty": "0.01",
+        "maxOrderQty": "1000.0",
+        "minNotional": "5.0",
+        "basePrecision": 2,
+        "quotePrecision": 2,
+    },
+    "SOLUSDT": {
+        "tickSize": "0.001",
+        "qtyStep": "0.1",
+        "minOrderQty": "0.1",
+        "maxOrderQty": "10000.0",
+        "minNotional": "5.0",
+        "basePrecision": 1,
+        "quotePrecision": 3,
+    },
+    "XRPUSDT": {
+        "tickSize": "0.0001",
+        "qtyStep": "1",
+        "minOrderQty": "1",
+        "maxOrderQty": "100000.0",
+        "minNotional": "5.0",
+        "basePrecision": 0,
+        "quotePrecision": 4,
+    },
+}
+
+
 class InstrumentsManager:
 
     """
@@ -101,8 +142,27 @@ class InstrumentsManager:
 
             if response.get("retCode") != 0:
 
-                logger.error(f"Failed to get instruments: {response.get('retMsg')}")
-
+                error_msg = response.get('retMsg', '')
+                logger.error(f"Failed to get instruments: {error_msg}")
+                
+                # Fallback: используем дефолтные значения для популярных символов
+                if "Illegal category" in error_msg or response.get("retCode") == 10001:
+                    logger.warning("instruments-info failed (likely testnet issue), using DEFAULT_INSTRUMENT_PARAMS fallback")
+                    instruments = {}
+                    for symbol, params in DEFAULT_INSTRUMENT_PARAMS.items():
+                        instruments[symbol] = {
+                            "symbol": symbol,
+                            "tickSize": Decimal(params["tickSize"]),
+                            "qtyStep": Decimal(params["qtyStep"]),
+                            "minOrderQty": Decimal(params["minOrderQty"]),
+                            "maxOrderQty": Decimal(params["maxOrderQty"]),
+                            "minNotional": Decimal(params["minNotional"]),
+                            "basePrecision": params["basePrecision"],
+                            "quotePrecision": params["quotePrecision"],
+                        }
+                        logger.info(f"Using fallback params for {symbol}")
+                    return instruments
+                
                 return {}
 
             instruments = {}
