@@ -555,22 +555,45 @@ class SignalArbitrator:
 
 class NoTradeZones:
 
-    """Проверка условий для запрета торговли"""
+    """
+    Task 3: Enhanced Signal Hygiene + No-Trade Zones
+    
+    Проверка условий для запрета торговли с унифицированными фильтрами:
+    - Max spread % check
+    - Max ATR % check
+    - Anomaly blocking (respects allow_anomaly_on_testnet)
+    - Orderbook quality checks
+    - Error count threshold
+    
+    All rejections have snake_case reason codes for observability.
+    """
     
     def __init__(
         self,
         max_atr_pct: float = 14.0,
-        max_spread_pct: float = 0.50
+        max_spread_pct: float = 0.50,
+        max_error_count: int = 5,
+        allow_anomaly_on_testnet: bool = False,
+        min_depth_imbalance: float = 0.99
     ):
         """
         Args:
             max_atr_pct: Максимальный ATR% для торговли
             max_spread_pct: Максимальный спред% для торговли
+            max_error_count: Максимальное количество ошибок до блокировки
+            allow_anomaly_on_testnet: Разрешить аномалии на testnet
+            min_depth_imbalance: Минимальный depth imbalance (>= блокировка)
         """
         self.max_atr_pct = max_atr_pct
         self.max_spread_pct = max_spread_pct
+        self.max_error_count = max_error_count
+        self.allow_anomaly_on_testnet = allow_anomaly_on_testnet
+        self.min_depth_imbalance = min_depth_imbalance
+        
         logger.info(
-            f"NoTradeZones initialized (max_atr_pct={max_atr_pct}, max_spread_pct={max_spread_pct})"
+            f"NoTradeZones initialized: max_atr_pct={max_atr_pct}, "
+            f"max_spread_pct={max_spread_pct}, max_error_count={max_error_count}, "
+            f"allow_anomaly_on_testnet={allow_anomaly_on_testnet}"
         )
 
     def is_trading_allowed(
@@ -579,76 +602,177 @@ class NoTradeZones:
 
     ) -> tuple[bool, Optional[str]]:
         """
-
-        Проверить, разрешена ли торговля.
-
+        Проверить, разрешена ли торговля (Task 3: Unified filters).
 
         Returns:
 
-            (allowed: bool, reason: str or None)
+            (allowed: bool, reason: str or None) - reason in snake_case
 
         """
 
         latest = df.iloc[-1]
 
-        # 1. Аномалия данных
+        # Filter 1: Data anomaly check
+        anomaly_result = self._check_anomaly(latest, features)
+        if not anomaly_result[0]:
+            return anomaly_result
 
+        # Filter 2: Orderbook quality check
+        orderbook_result = self._check_orderbook_quality(latest, features)
+        if not orderbook_result[0]:
+            return orderbook_result
+
+        # Filter 3: Spread check (liquidity)
+        spread_result = self._check_spread(latest, features)
+        if not spread_result[0]:
+            return spread_result
+
+        # Filter 4: Depth imbalance check (optional, usually disabled for testnet)
+        depth_result = self._check_depth_imbalance(latest, features)
+        if not depth_result[0]:
+            return depth_result
+
+        # Filter 5: Error count check
+        error_result = self._check_error_count(error_count)
+        if not error_result[0]:
+            return error_result
+
+        # Filter 6: Extreme volatility check
+        volatility_result = self._check_extreme_volatility(latest)
+        if not volatility_result[0]:
+            return volatility_result
+
+        return True, None
+    
+    def _check_anomaly(
+        self, 
+        latest: pd.Series, 
+        features: Dict[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Filter 1: Anomaly detection
+        
+        Reason codes:
+        - anomaly_wick
+        - anomaly_low_volume
+        - anomaly_gap
+        - anomaly_detected (generic)
+        """
         has_anomaly = latest.get("has_anomaly", 0)
-
-        if has_anomaly == 1:
-            # На testnet правила детекта аномалий могут слишком часто срабатывать из-за
-            # малой ликвидности/редких принтов. Даем возможность смягчить это поведение.
-            is_testnet = bool(features.get("is_testnet", False))
-            allow_on_testnet = bool(features.get("allow_anomaly_on_testnet", False))
-            if not (is_testnet and allow_on_testnet):
-                return False, "Data anomaly detected"
-
-        # 1b. Orderbook sanity check - if orderbook invalid, block trading
+        
+        if has_anomaly != 1:
+            return True, None
+        
+        # Check if testnet exception applies
+        is_testnet = bool(features.get("is_testnet", False))
+        allow_on_testnet = self.allow_anomaly_on_testnet or bool(features.get("allow_anomaly_on_testnet", False))
+        
+        if is_testnet and allow_on_testnet:
+            logger.debug("Anomaly detected but allowed on testnet")
+            return True, None
+        
+        # Determine specific anomaly type if available
+        anomaly_wick = latest.get("anomaly_wick", 0)
+        anomaly_low_volume = latest.get("anomaly_low_volume", 0)
+        anomaly_gap = latest.get("anomaly_gap", 0)
+        
+        if anomaly_wick == 1:
+            return False, "anomaly_wick"
+        elif anomaly_low_volume == 1:
+            return False, "anomaly_low_volume"
+        elif anomaly_gap == 1:
+            return False, "anomaly_gap"
+        else:
+            return False, "anomaly_detected"
+    
+    def _check_orderbook_quality(
+        self, 
+        latest: pd.Series, 
+        features: Dict[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Filter 2: Orderbook quality
+        
+        Reason code: orderbook_invalid
+        """
         orderbook_invalid = features.get("orderbook_invalid", False) or latest.get("orderbook_invalid", False)
+        
         if orderbook_invalid:
             deviation = features.get("orderbook_deviation_pct") or latest.get("orderbook_deviation_pct", 0)
-            return False, f"Bad orderbook data: deviation={deviation:.2f}%"
-
-        # 2. Плохая ликвидность (широкий спред) - CONFIGURABLE
-        # Only check spread if orderbook is valid
+            return False, f"orderbook_invalid|deviation={deviation:.2f}%"
+        
+        return True, None
+    
+    def _check_spread(
+        self, 
+        latest: pd.Series, 
+        features: Dict[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Filter 3: Spread check (liquidity)
+        
+        Reason code: excessive_spread
+        """
         spread_percent = features.get("spread_percent")
         if spread_percent is None:
             spread_percent = latest.get("spread_percent", 0)
         
-        # Skip spread check if it's None (orderbook was invalid)
-        if spread_percent is not None and spread_percent > self.max_spread_pct:
-            return False, f"Excessive spread: {spread_percent:.2f}% > {self.max_spread_pct}%"
-
-        # 3. Низкая глубина стакана
-
-        # На тестовой сети стакан может быть очень дисбалансирован из-за малого объема торговли
-
-        # Поэтому отключаем эту проверку для testnet или проверяем только критические значения (> 0.99)
-
+        # Skip if spread is None (orderbook was invalid)
+        if spread_percent is None:
+            return True, None
+        
+        if spread_percent > self.max_spread_pct:
+            return False, f"excessive_spread|{spread_percent:.2f}%>{self.max_spread_pct}%"
+        
+        return True, None
+    
+    def _check_depth_imbalance(
+        self, 
+        latest: pd.Series, 
+        features: Dict[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Filter 4: Depth imbalance (optional)
+        
+        Reason code: depth_imbalance_extreme
+        """
         depth_imbalance = features.get("depth_imbalance", 0)
-
-        # Закомментировано: слишком строго для тестовой сети
-
-        # if abs(depth_imbalance) > 0.99:
-
-        #     return False, f"Orderbook imbalance: {depth_imbalance:.2f}"
-
-        # 4. Серия ошибок (передаётся извне)
-
-        if error_count > 5:  # Смягчено с 3
-
-            return False, f"Too many errors: {error_count}"
-
-        # 5. Экстремальная волатильность - CONFIGURABLE
-
+        
+        # Usually disabled for testnet (min_depth_imbalance >= 0.99)
+        if abs(depth_imbalance) >= self.min_depth_imbalance:
+            return False, f"depth_imbalance_extreme|{depth_imbalance:.2f}"
+        
+        return True, None
+    
+    def _check_error_count(
+        self, 
+        error_count: int
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Filter 5: Error count threshold
+        
+        Reason code: too_many_errors
+        """
+        if error_count > self.max_error_count:
+            return False, f"too_many_errors|count={error_count}>{self.max_error_count}"
+        
+        return True, None
+    
+    def _check_extreme_volatility(
+        self, 
+        latest: pd.Series
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Filter 6: Extreme volatility
+        
+        Reason code: extreme_volatility
+        """
         vol_regime = latest.get("vol_regime", 0)
-
         atr_percent = latest.get("atr_percent", 0)
-
-        if vol_regime == 1 and atr_percent > self.max_atr_pct:  # Configurable threshold
-
-            return False, f"Extreme volatility: ATR={atr_percent:.2f}% > {self.max_atr_pct}%"
-
+        
+        if vol_regime == 1 and atr_percent > self.max_atr_pct:
+            return False, f"extreme_volatility|atr={atr_percent:.2f}%>{self.max_atr_pct}%"
+        
         return True, None
 
 
