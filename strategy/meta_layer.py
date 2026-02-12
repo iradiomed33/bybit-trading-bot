@@ -36,6 +36,95 @@ logger = setup_logger(__name__)
 signal_logger = get_signal_logger()
 
 
+class ConfidenceScaler:
+    """
+    Task 4: Confidence Normalization/Calibration
+    
+    Scales strategy confidence using linear transformation:
+    scaled_conf = clamp(a * raw_conf + b, 0, 1)
+    
+    Supports per-strategy and per-symbol overrides.
+    """
+    
+    def __init__(self, scaling_config: Optional[Dict[str, Any]] = None):
+        """
+        Args:
+            scaling_config: {
+                "default": {"a": 1.0, "b": 0.0},
+                "per_strategy": {
+                    "TrendPullback": {"a": 0.9, "b": 0.1},
+                    "Breakout": {"a": 1.1, "b": -0.05},
+                    ...
+                },
+                "per_symbol": {
+                    "BTCUSDT": {
+                        "TrendPullback": {"a": 0.95, "b": 0.05}
+                    }
+                }
+            }
+        """
+        self.scaling_config = scaling_config or self._get_default_config()
+        logger.info("ConfidenceScaler initialized")
+    
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Default scaling config (no scaling)"""
+        return {
+            "default": {"a": 1.0, "b": 0.0},
+            "per_strategy": {},
+            "per_symbol": {}
+        }
+    
+    def scale_confidence(
+        self,
+        raw_confidence: float,
+        strategy: str,
+        symbol: Optional[str] = None
+    ) -> float:
+        """
+        Scale confidence using linear transformation.
+        
+        Args:
+            raw_confidence: Original confidence from strategy (0-1)
+            strategy: Strategy name
+            symbol: Trading symbol (for per-symbol overrides)
+            
+        Returns:
+            Scaled confidence clamped to [0, 1]
+        """
+        # Check for per-symbol override first
+        if symbol and symbol in self.scaling_config.get("per_symbol", {}):
+            symbol_config = self.scaling_config["per_symbol"][symbol]
+            if strategy in symbol_config:
+                params = symbol_config[strategy]
+                return self._apply_scaling(raw_confidence, params)
+        
+        # Check for per-strategy config
+        per_strategy = self.scaling_config.get("per_strategy", {})
+        if strategy in per_strategy:
+            params = per_strategy[strategy]
+            return self._apply_scaling(raw_confidence, params)
+        
+        # Use default
+        default_params = self.scaling_config.get("default", {"a": 1.0, "b": 0.0})
+        return self._apply_scaling(raw_confidence, default_params)
+    
+    def _apply_scaling(
+        self,
+        raw_confidence: float,
+        params: Dict[str, float]
+    ) -> float:
+        """
+        Apply linear scaling: scaled = clamp(a * raw + b, 0, 1)
+        """
+        a = params.get("a", 1.0)
+        b = params.get("b", 0.0)
+        
+        scaled = a * raw_confidence + b
+        
+        # Clamp to [0, 1]
+        return max(0.0, min(1.0, scaled))
+
+
 class RegimeSwitcher:
 
     """Определение режима рынка на основе multi-factor анализа
@@ -281,7 +370,11 @@ class WeightedStrategyRouter:
     Returns the highest-scoring candidate and logs all candidates with reasons.
     """
     
-    def __init__(self, weights_config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, 
+        weights_config: Optional[Dict[str, Any]] = None,
+        confidence_scaling_config: Optional[Dict[str, Any]] = None
+    ):
         """
         Args:
             weights_config: Configuration for strategy weights
@@ -297,8 +390,10 @@ class WeightedStrategyRouter:
                     },
                     ...
                 }
+            confidence_scaling_config: Task 4 confidence scaling config
         """
         self.weights_config = weights_config or self._get_default_weights()
+        self.confidence_scaler = ConfidenceScaler(confidence_scaling_config)
         logger.info(f"WeightedStrategyRouter initialized with weights config")
     
     def _get_default_weights(self) -> Dict[str, Any]:
@@ -377,6 +472,13 @@ class WeightedStrategyRouter:
             raw_confidence = candidate.get("confidence", 0.0)
             direction = candidate.get("signal", "")
             
+            # Task 4: Apply confidence scaling
+            scaled_confidence = self.confidence_scaler.scale_confidence(
+                raw_confidence=raw_confidence,
+                strategy=strategy_name,
+                symbol=symbol
+            )
+            
             # Calculate strategy weight
             strategy_weight = self._calculate_strategy_weight(
                 strategy_name,
@@ -389,12 +491,13 @@ class WeightedStrategyRouter:
             if mtf_score is not None:
                 mtf_multiplier = 0.5 + (mtf_score * 0.5)  # Range: 0.5-1.0
             
-            # Calculate final score
-            final_score = raw_confidence * strategy_weight * mtf_multiplier
+            # Calculate final score using SCALED confidence
+            final_score = scaled_confidence * strategy_weight * mtf_multiplier
             
             # Add scoring metadata to candidate
             candidate["_scoring"] = {
                 "raw_confidence": round(raw_confidence, 3),
+                "scaled_confidence": round(scaled_confidence, 3),
                 "strategy_weight": round(strategy_weight, 3),
                 "mtf_multiplier": round(mtf_multiplier, 3),
                 "final_score": round(final_score, 3)
@@ -404,8 +507,9 @@ class WeightedStrategyRouter:
             
             logger.debug(
                 f"Candidate {strategy_name} {direction}: "
-                f"raw_conf={raw_confidence:.3f}, weight={strategy_weight:.3f}, "
-                f"mtf_mult={mtf_multiplier:.3f} → final={final_score:.3f}"
+                f"raw_conf={raw_confidence:.3f} → scaled={scaled_confidence:.3f}, "
+                f"weight={strategy_weight:.3f}, mtf_mult={mtf_multiplier:.3f} "
+                f"→ final={final_score:.3f}"
             )
         
         # Sort by final score (descending)
@@ -800,6 +904,8 @@ class MetaLayer:
         
         weights_config: Optional[Dict[str, Any]] = None,
         
+        confidence_scaling_config: Optional[Dict[str, Any]] = None,
+        
         use_weighted_router: bool = True,
 
     ):
@@ -823,6 +929,8 @@ class MetaLayer:
             
             weights_config: Конфигурация весов стратегий для weighted router
             
+            confidence_scaling_config: Task 4: Конфигурация масштабирования confidence
+            
             use_weighted_router: Использовать взвешенный роутер (Task 2)
 
         """
@@ -833,7 +941,11 @@ class MetaLayer:
         
         self.regime_scorer = RegimeScorer()  # Task 1
         
-        self.weighted_router = WeightedStrategyRouter(weights_config) if use_weighted_router else None
+        # Task 2 + Task 4: Weighted router with confidence scaling
+        self.weighted_router = WeightedStrategyRouter(
+            weights_config, 
+            confidence_scaling_config
+        ) if use_weighted_router else None
 
         self.arbitrator = SignalArbitrator()
 

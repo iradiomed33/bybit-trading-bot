@@ -123,6 +123,27 @@
         }
       }
     },
+    "confidence_scaling": {
+      "default": {
+        "a": 1.0,
+        "b": 0.0
+      },
+      "per_strategy": {
+        "TrendPullback": {
+          "a": 0.9,
+          "b": 0.1
+        },
+        "Breakout": {
+          "a": 1.0,
+          "b": 0.0
+        },
+        "MeanReversion": {
+          "a": 1.0,
+          "b": 0.0
+        }
+      },
+      "per_symbol": {}
+    },
     "volatility_filter_enabled": false,
     "volatility_threshold": 0.02,
     "no_trade_hours": []
