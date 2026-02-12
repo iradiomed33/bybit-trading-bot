@@ -90,6 +90,60 @@
       "near_strategies": ["TrendPullback"],
       "far_strategies": ["Breakout"]
     },
+    "use_weighted_router": true,
+    "weights": {
+      "TrendPullback": {
+        "base": 1.0,
+        "regime_multipliers": {
+          "trend": 1.5,
+          "range": 0.5,
+          "high_volatility": 0.7,
+          "choppy": 0.3,
+          "neutral": 1.0
+        }
+      },
+      "Breakout": {
+        "base": 1.0,
+        "regime_multipliers": {
+          "trend": 1.3,
+          "range": 1.4,
+          "high_volatility": 0.5,
+          "choppy": 0.2,
+          "neutral": 1.0
+        }
+      },
+      "MeanReversion": {
+        "base": 1.0,
+        "regime_multipliers": {
+          "trend": 0.3,
+          "range": 1.6,
+          "high_volatility": 0.4,
+          "choppy": 0.8,
+          "neutral": 1.0
+        }
+      }
+    },
+    "confidence_scaling": {
+      "default": {
+        "a": 1.0,
+        "b": 0.0
+      },
+      "per_strategy": {
+        "TrendPullback": {
+          "a": 0.9,
+          "b": 0.1
+        },
+        "Breakout": {
+          "a": 1.0,
+          "b": 0.0
+        },
+        "MeanReversion": {
+          "a": 1.0,
+          "b": 0.0
+        }
+      },
+      "per_symbol": {}
+    },
     "volatility_filter_enabled": false,
     "volatility_threshold": 0.02,
     "no_trade_hours": []

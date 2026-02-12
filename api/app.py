@@ -411,6 +411,44 @@ async def update_config(key: str, body: ConfigUpdate):
         config.set(key, body.value)
 
         config.save()
+        
+        # CRITICAL FIX: reload config after save to ensure file and memory are in sync
+        config.reload()
+
+        # Определяем, требуется ли перезапуск бота для применения изменений
+        # Параметры, которые требуют перезапуска (читаются только при инициализации)
+        restart_required_prefixes = [
+            "risk_management.",
+            "risk_monitor.",
+            "stop_loss_tp.",
+            "paper_trading.",
+            "execution.",
+            "meta_layer.",
+            "no_trade_zone.",
+            "kill_switch.",
+        ]
+        
+        requires_restart = any(key.startswith(prefix) for prefix in restart_required_prefixes)
+        
+        # Автоматически перезапускаем бот если он запущен и изменения требуют перезапуска
+        bot_restarted = False
+        if requires_restart and bot_status["is_running"]:
+            logger.info(f"Config change '{key}' requires bot restart. Restarting...")
+            
+            # Сохраняем текущие параметры бота
+            was_running = bot_status["is_running"]
+            
+            # Останавливаем бот
+            await stop_bot()
+            
+            # Небольшая пауза для корректной остановки
+            await asyncio.sleep(1.0)
+            
+            # Перезапускаем бот с новой конфигурацией
+            await start_bot()
+            
+            bot_restarted = True
+            logger.info(f"Bot restarted with new config: {key} = {body.value}")
 
         # Отправить обновление всем подключённым клиентам
 
@@ -425,16 +463,30 @@ async def update_config(key: str, body: ConfigUpdate):
                 "value": body.value,
 
                 "config": config.config,  # <-- добавили полный конфиг
+                
+                "requires_restart": requires_restart,
+                
+                "bot_restarted": bot_restarted,
 
             }
 
         )
 
+        message = f"Config updated: {key} = {body.value}"
+        if bot_restarted:
+            message += " (bot automatically restarted)"
+        elif requires_restart and not bot_status["is_running"]:
+            message += " (bot restart required - please start bot to apply changes)"
+
         return {
 
             "status": "success",
 
-            "message": f"Config updated: {key} = {body.value}",
+            "message": message,
+            
+            "requires_restart": requires_restart,
+            
+            "bot_restarted": bot_restarted,
 
         }
 
