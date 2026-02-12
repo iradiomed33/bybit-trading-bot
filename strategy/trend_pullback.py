@@ -62,6 +62,14 @@ class TrendPullbackStrategy(BaseStrategy):
 
         limit_ttl_bars: int = 3,
 
+        # Configurable entry zone and volume thresholds
+
+        entry_zone_atr_low: float = -0.5,
+
+        entry_zone_atr_high: float = 0.2,
+
+        volume_z_threshold: float = 1.0,
+
     ):
         """
 
@@ -84,6 +92,12 @@ class TrendPullbackStrategy(BaseStrategy):
             entry_mode: STR-003: Режим входа - 'immediate' (старый), 'confirm_close' (подтверждение закрытием), 'limit_retest' (лимитка на уровне)
 
             limit_ttl_bars: STR-003: TTL для лимитных заявок (в барах)
+
+            entry_zone_atr_low: Нижняя граница entry zone (в ATRs от EMA)
+
+            entry_zone_atr_high: Верхняя граница entry zone (в ATRs от EMA)
+
+            volume_z_threshold: Минимальный z-score объёма для подтверждения
 
         """
 
@@ -118,6 +132,14 @@ class TrendPullbackStrategy(BaseStrategy):
         self.entry_mode = entry_mode
 
         self.limit_ttl_bars = limit_ttl_bars
+
+        # Configurable entry zone and volume thresholds
+
+        self.entry_zone_atr_low = entry_zone_atr_low
+
+        self.entry_zone_atr_high = entry_zone_atr_high
+
+        self.volume_z_threshold = volume_z_threshold
 
     def generate_signal(
 
@@ -252,7 +274,9 @@ class TrendPullbackStrategy(BaseStrategy):
 
             distance_to_ema = (close - ema_20) / atr
 
-            pullback_passed = -0.5 <= distance_to_ema <= 0.2
+            pullback_passed = self.entry_zone_atr_low <= distance_to_ema <= self.entry_zone_atr_high
+
+            threshold_str = f"[{self.entry_zone_atr_low}, {self.entry_zone_atr_high}] ATRs"
 
             signal_logger.log_filter_check(
 
@@ -264,7 +288,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 value=round(distance_to_ema, 2),
 
-                threshold="[-0.5, 0.2] ATRs",
+                threshold=threshold_str,
 
             )
 
@@ -274,7 +298,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 volume_zscore = latest.get("volume_zscore", 0)
 
-                volume_passed = volume_zscore > 1.0
+                volume_passed = volume_zscore > self.volume_z_threshold
 
                 signal_logger.log_filter_check(
 
@@ -286,7 +310,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                     value=round(volume_zscore, 2),
 
-                    threshold=">1.0 (std devs)",
+                    threshold=f">{self.volume_z_threshold} (std devs)",
 
                 )
 
@@ -468,7 +492,9 @@ class TrendPullbackStrategy(BaseStrategy):
 
             distance_to_ema = (ema_20 - close) / atr
 
-            pullback_passed = -0.5 <= distance_to_ema <= 0.2
+            pullback_passed = self.entry_zone_atr_low <= distance_to_ema <= self.entry_zone_atr_high
+
+            threshold_str = f"[{self.entry_zone_atr_low}, {self.entry_zone_atr_high}] ATRs"
 
             signal_logger.log_filter_check(
 
@@ -480,7 +506,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 value=round(distance_to_ema, 2),
 
-                threshold="[-0.5, 0.2] ATRs",
+                threshold=threshold_str,
 
             )
 
@@ -488,7 +514,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 volume_zscore = latest.get("volume_zscore", 0)
 
-                volume_passed = volume_zscore > 1.0
+                volume_passed = volume_zscore > self.volume_z_threshold
 
                 signal_logger.log_filter_check(
 
@@ -500,7 +526,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                     value=round(volume_zscore, 2),
 
-                    threshold=">1.0 (std devs)",
+                    threshold=f">{self.volume_z_threshold} (std devs)",
 
                 )
 

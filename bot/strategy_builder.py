@@ -119,6 +119,11 @@ class StrategyBuilder:
         entry_mode = self.config.get(f"{config_key}.entry_mode", "confirm_close")
         limit_ttl_bars = self.config.get(f"{config_key}.limit_ttl_bars", 3)
         
+        # Configurable entry zone and volume thresholds
+        entry_zone_atr_low = self.config.get(f"{config_key}.entry_zone_atr_low", -0.5)
+        entry_zone_atr_high = self.config.get(f"{config_key}.entry_zone_atr_high", 0.2)
+        volume_z_threshold = self.config.get(f"{config_key}.volume_z_threshold", 1.0)
+        
         logger.info(f"\n  [TrendPullback Config]")
         logger.info(f"    min_adx: {min_adx}")
         logger.info(f"    pullback_percent: {pullback_percent}")
@@ -127,6 +132,8 @@ class StrategyBuilder:
         logger.info(f"    lookback: {lookback}")
         logger.info(f"    enable_liquidation_filter: {enable_liquidation_filter}")
         logger.info(f"    entry_mode: {entry_mode}")
+        logger.info(f"    entry_zone: [{entry_zone_atr_low}, {entry_zone_atr_high}] ATRs")
+        logger.info(f"    volume_z_threshold: {volume_z_threshold}")
         
         strategy = TrendPullbackStrategy(
             min_adx=float(min_adx),
@@ -138,6 +145,9 @@ class StrategyBuilder:
             liquidation_volume_pctl=float(liquidation_volume_pctl),
             entry_mode=str(entry_mode),
             limit_ttl_bars=int(limit_ttl_bars),
+            entry_zone_atr_low=float(entry_zone_atr_low),
+            entry_zone_atr_high=float(entry_zone_atr_high),
+            volume_z_threshold=float(volume_z_threshold),
         )
         
         # Store config for later access (e.g., in MetaLayer)
