@@ -265,6 +265,14 @@
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label">
+                                            Кредитное плечо (x)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Плечо применяется в LIVE режиме через Bybit set-leverage. Рекомендуется не завышать."></i>
+                                        </label>
+                                        <input type="number" class="form-control" id="settingMaxLeverage" data-testid="settings-risk-max-leverage" min="1" max="100" step="1" value="10">
+                                        <small class="form-text text-muted">Работает в Live. Применится после перезапуска бота</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">
                                             Риск-профиль
                                             <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Предустановленный набор порогов риска. Conservative = минимальный риск, Aggressive = максимальная агрессивность"></i>
                                         </label>

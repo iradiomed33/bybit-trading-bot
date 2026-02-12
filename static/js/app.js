@@ -632,6 +632,7 @@ async function loadSettings() {
     document.getElementById('settingPositionRisk').value = configData.risk_management?.position_risk_percent || 1.0;
     document.getElementById('settingMaxPositions').value = configData.risk_monitor?.max_positions || 3;
     document.getElementById('settingMaxTotalNotional').value = configData.risk_monitor?.max_total_notional || 100000;
+    document.getElementById('settingMaxLeverage').value = configData.risk_management?.max_leverage || 10;
     document.getElementById('settingRiskProfile').value = configData.meta_layer?.risk_profile || 'Balanced';
     
     // Load execution settings
@@ -685,6 +686,7 @@ async function saveSettings() {
         // Risk monitor settings
         'risk_monitor.max_positions': parseInt(document.getElementById('settingMaxPositions').value),
         'risk_monitor.max_total_notional': parseFloat(document.getElementById('settingMaxTotalNotional').value),
+        'risk_monitor.max_leverage': parseFloat(document.getElementById('settingMaxLeverage').value),
         
         // Execution settings
         'execution.order_type': document.getElementById('settingOrderType').value,
@@ -696,6 +698,7 @@ async function saveSettings() {
         'risk_management.daily_loss_limit_percent': parseFloat(document.getElementById('settingDailyLossLimit').value),
         'risk_management.stop_loss_percent': parseFloat(document.getElementById('settingStopLoss').value),
         'risk_management.take_profit_percent': parseFloat(document.getElementById('settingTakeProfit').value),
+        'risk_management.max_leverage': parseFloat(document.getElementById('settingMaxLeverage').value),
         
         // Kill-switch settings
         'kill_switch.max_consecutive_errors': parseInt(document.getElementById('settingMaxConsecErrors').value),
