@@ -437,6 +437,21 @@ class Database:
         """Сохранить торговый сигнал"""
 
         cursor = self.conn.cursor()
+        
+        # Конвертируем metadata в JSON-совместимый формат
+        def json_serialize(obj):
+            """Helper для сериализации нестандартных типов"""
+            if isinstance(obj, (bool, int, float, str, type(None))):
+                return obj
+            elif isinstance(obj, dict):
+                return {k: json_serialize(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [json_serialize(item) for item in obj]
+            else:
+                # Преобразуем все остальное в строку
+                return str(obj)
+        
+        safe_metadata = json_serialize(metadata)
 
         cursor.execute(
 
@@ -460,7 +475,7 @@ class Database:
 
                 price,
 
-                json.dumps(metadata),
+                json.dumps(safe_metadata),
 
             ),
 

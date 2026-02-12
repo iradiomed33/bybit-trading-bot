@@ -259,14 +259,20 @@ class OrderManager:
         # 1. Проверяем в БД
         db_order = self.db.get_order_by_link_id(order_link_id)
         if db_order:
-            logger.debug(f"Order found in DB: {order_link_id}")
-            # Формируем OrderResult из данных БД
-            return OrderResult(
-                success=True,
-                order_id=db_order.get("order_id"),
-                error=None,
-                raw={"source": "database", "order": db_order}
-            )
+            # Проверяем статус ордера - возвращаем только активные
+            status = db_order.get("status", "")
+            if status in ["New", "PartiallyFilled", "Untriggered"]:
+                logger.debug(f"Active order found in DB: {order_link_id} (status={status})")
+                # Формируем OrderResult из данных БД
+                return OrderResult(
+                    success=True,
+                    order_id=db_order.get("order_id"),
+                    error=None,
+                    raw={"source": "database", "order": db_order}
+                )
+            else:
+                logger.debug(f"Order found in DB but status is {status}, will create new order")
+                return None
 
         # 2. Проверяем через API (на случай если БД не синхронизирована)
         try:
@@ -285,15 +291,21 @@ class OrderManager:
             if result.success and result.raw.get("result", {}).get("list"):
                 orders = result.raw["result"]["list"]
                 if orders:
-                    logger.debug(f"Order found via API: {order_link_id}")
-                    # Возвращаем первый найденный ордер
                     order = orders[0]
-                    return OrderResult(
-                        success=True,
-                        order_id=order.get("orderId"),
-                        error=None,
-                        raw={"source": "api", "order": order}
-                    )
+                    order_status = order.get("orderStatus", "")
+                    # Возвращаем только активные ордера
+                    if order_status in ["New", "PartiallyFilled", "Untriggered"]:
+                        logger.debug(f"Active order found via API: {order_link_id} (status={order_status})")
+                        # Возвращаем первый найденный ордер
+                        return OrderResult(
+                            success=True,
+                            order_id=order.get("orderId"),
+                            error=None,
+                            raw={"source": "api", "order": order}
+                        )
+                    else:
+                        logger.debug(f"Order found via API but status is {order_status}, will create new order")
+                        return None
 
         except Exception as e:
             logger.warning(f"Error checking order via API: {e}")

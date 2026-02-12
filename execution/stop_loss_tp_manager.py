@@ -411,6 +411,40 @@ class StopLossTakeProfitManager:
             return True, None, None  # Успешно, но SL/TP не выставлены (виртуальный режим)
 
         try:
+            # ВАЖНО: Проверяем, что позиция действительно существует на бирже
+            # Это предотвращает ошибку "can not set tp/sl/ts for zero position"
+            from exchange.account import AccountClient
+            
+            # Получаем клиента для проверки позиции
+            if hasattr(self.order_manager, 'client'):
+                try:
+                    positions_response = self.order_manager.client.post(
+                        "/v5/position/list",
+                        params={
+                            "category": category,
+                            "symbol": levels.symbol,
+                        }
+                    )
+                    
+                    # Проверяем, есть ли открытая позиция
+                    positions = positions_response.get("result", {}).get("list", [])
+                    has_position = False
+                    
+                    for pos in positions:
+                        size = float(pos.get("size", 0))
+                        if size > 0:
+                            has_position = True
+                            break
+                    
+                    if not has_position:
+                        logger.warning(
+                            f"[{position_id}] No active position found on exchange for {levels.symbol}. "
+                            "Skipping exchange SL/TP and using virtual monitoring instead."
+                        )
+                        return True, None, None  # Успех (используем виртуальный режим)
+                        
+                except Exception as e:
+                    logger.warning(f"Unable to verify position existence: {e}. Attempting to set SL/TP anyway...")
 
             # Используем Trading Stop API для установки SL/TP на позицию
 
