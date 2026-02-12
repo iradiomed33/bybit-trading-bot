@@ -1038,8 +1038,31 @@ def _filter_event(event: Dict[str, Any], level: str, category: str, symbol: str)
     """
     # Фильтр по level
     if level != "all":
-        if event.get("level", "").upper() != level.upper():
-            return False
+        # Специальная обработка для сигналов: level=info/warning/error маппим на stage
+        event_level = event.get("level", "").upper()
+        event_category = event.get("category", "")
+        event_stage = event.get("stage", "").upper()
+        
+        # Для категории "signal" фильтруем по полю stage, а не level
+        if event_category == "signal" and event_level == "SIGNAL":
+            # Маппинг UI фильтра на стадии сигнала:
+            # info → ACCEPTED (успешные сигналы)
+            # warning → REJECTED (отклоненные сигналы)
+            # error → нет сигналов с таким уровнем (показываем пусто)
+            if level.upper() == "INFO":
+                if event_stage != "ACCEPTED":
+                    return False
+            elif level.upper() == "WARNING":
+                if event_stage != "REJECTED":
+                    return False
+            elif level.upper() == "ERROR":
+                # Сигналы не имеют стадии ERROR, показываем пустой список
+                return False
+            # Если level=signal или другое - показываем все сигналы
+        else:
+            # Для остальных событий проверяем level как обычно
+            if event_level != level.upper():
+                return False
     
     # Фильтр по category
     if category != "all":
