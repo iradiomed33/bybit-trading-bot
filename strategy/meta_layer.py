@@ -17,12 +17,14 @@ Meta Layer: управление стратегиями, режимами рын
 
 
 from typing import List, Dict, Any, Optional
+import json
 
 import pandas as pd
 
 from strategy.base_strategy import BaseStrategy
 
 from data.timeframe_cache import TimeframeCache
+from strategy.regime_scorer import RegimeScorer
 
 from logger import setup_logger
 
@@ -267,6 +269,202 @@ class RegimeSwitcher:
         return "unknown"
 
 
+class WeightedStrategyRouter:
+    """
+    Task 2: Weighted Strategy Router
+    
+    Computes weighted scores for all strategy candidates based on:
+    - Raw strategy confidence
+    - Strategy weight (based on regime scores)
+    - MTF multiplier (optional)
+    
+    Returns the highest-scoring candidate and logs all candidates with reasons.
+    """
+    
+    def __init__(self, weights_config: Optional[Dict[str, Any]] = None):
+        """
+        Args:
+            weights_config: Configuration for strategy weights
+                {
+                    "TrendPullback": {
+                        "base": 1.0,
+                        "regime_multipliers": {
+                            "trend": 1.5,
+                            "range": 0.5,
+                            "high_volatility": 0.3,
+                            "choppy": 0.2
+                        }
+                    },
+                    ...
+                }
+        """
+        self.weights_config = weights_config or self._get_default_weights()
+        logger.info(f"WeightedStrategyRouter initialized with weights config")
+    
+    def _get_default_weights(self) -> Dict[str, Any]:
+        """Default strategy weights based on regime"""
+        return {
+            "TrendPullback": {
+                "base": 1.0,
+                "regime_multipliers": {
+                    "trend": 1.5,           # Favored in trend
+                    "range": 0.5,           # Disfavored in range
+                    "high_volatility": 0.7, # Moderate in high vol
+                    "choppy": 0.3,          # Disfavored in chop
+                    "neutral": 1.0
+                }
+            },
+            "Breakout": {
+                "base": 1.0,
+                "regime_multipliers": {
+                    "trend": 1.3,           # Good in trend (far from EMA)
+                    "range": 1.4,           # Very good in range breakouts
+                    "high_volatility": 0.5, # Risky in high vol
+                    "choppy": 0.2,          # Very bad in choppy
+                    "neutral": 1.0
+                }
+            },
+            "MeanReversion": {
+                "base": 1.0,
+                "regime_multipliers": {
+                    "trend": 0.3,           # Disfavored in trend
+                    "range": 1.6,           # Strongly favored in range
+                    "high_volatility": 0.4, # Risky in high vol
+                    "choppy": 0.8,          # Moderate in choppy
+                    "neutral": 1.0
+                }
+            }
+        }
+    
+    def route_signals(
+        self,
+        candidates: List[Dict[str, Any]],
+        regime_scores: Dict[str, float],
+        regime: str,
+        symbol: str,
+        mtf_score: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Route signals using weighted scoring.
+        
+        Args:
+            candidates: List of signal dicts from strategies
+            regime_scores: Dict with trend_score, range_score, etc.
+            regime: Dominant regime string
+            symbol: Trading symbol
+            mtf_score: Optional MTF confluence score
+            
+        Returns:
+            {
+                "selected": Optional[Dict],  # Best signal or None
+                "all_candidates": List[Dict],  # All evaluated candidates
+                "rejection_summary": Dict  # Counts of rejection reasons
+            }
+        """
+        if not candidates:
+            return {
+                "selected": None,
+                "all_candidates": [],
+                "rejection_summary": {}
+            }
+        
+        # Evaluate and score all candidates
+        evaluated = []
+        rejection_reasons = {}
+        
+        for candidate in candidates:
+            strategy_name = candidate.get("strategy", "Unknown")
+            raw_confidence = candidate.get("confidence", 0.0)
+            direction = candidate.get("signal", "")
+            
+            # Calculate strategy weight
+            strategy_weight = self._calculate_strategy_weight(
+                strategy_name,
+                regime_scores,
+                regime
+            )
+            
+            # Calculate MTF multiplier (1.0 if not available)
+            mtf_multiplier = 1.0
+            if mtf_score is not None:
+                mtf_multiplier = 0.5 + (mtf_score * 0.5)  # Range: 0.5-1.0
+            
+            # Calculate final score
+            final_score = raw_confidence * strategy_weight * mtf_multiplier
+            
+            # Add scoring metadata to candidate
+            candidate["_scoring"] = {
+                "raw_confidence": round(raw_confidence, 3),
+                "strategy_weight": round(strategy_weight, 3),
+                "mtf_multiplier": round(mtf_multiplier, 3),
+                "final_score": round(final_score, 3)
+            }
+            
+            evaluated.append(candidate)
+            
+            logger.debug(
+                f"Candidate {strategy_name} {direction}: "
+                f"raw_conf={raw_confidence:.3f}, weight={strategy_weight:.3f}, "
+                f"mtf_mult={mtf_multiplier:.3f} → final={final_score:.3f}"
+            )
+        
+        # Sort by final score (descending)
+        evaluated.sort(key=lambda x: x["_scoring"]["final_score"], reverse=True)
+        
+        # Check for conflicts (long vs short)
+        long_candidates = [c for c in evaluated if c.get("signal") == "long"]
+        short_candidates = [c for c in evaluated if c.get("signal") == "short"]
+        
+        selected = None
+        if long_candidates and short_candidates:
+            # Conflict - reject all
+            for c in evaluated:
+                c["_rejection_reason"] = "signal_conflict"
+            rejection_reasons["signal_conflict"] = len(evaluated)
+            logger.warning(f"Signal conflict detected: {len(long_candidates)} long vs {len(short_candidates)} short")
+        else:
+            # No conflict - select highest score
+            if evaluated:
+                selected = evaluated[0]
+                logger.info(
+                    f"Selected {selected.get('strategy')} {selected.get('signal')} "
+                    f"with final_score={selected['_scoring']['final_score']:.3f}"
+                )
+        
+        return {
+            "selected": selected,
+            "all_candidates": evaluated,
+            "rejection_summary": rejection_reasons
+        }
+    
+    def _calculate_strategy_weight(
+        self,
+        strategy_name: str,
+        regime_scores: Dict[str, float],
+        regime: str
+    ) -> float:
+        """
+        Calculate strategy weight based on regime.
+        
+        Weight = base * regime_multiplier
+        
+        Where regime_multiplier can be:
+        - From regime string lookup (simple)
+        - OR computed from regime scores (advanced)
+        """
+        config = self.weights_config.get(strategy_name, {})
+        base = config.get("base", 1.0)
+        
+        # Get regime multiplier from config
+        regime_multipliers = config.get("regime_multipliers", {})
+        regime_mult = regime_multipliers.get(regime, 1.0)
+        
+        # Advanced: Could also blend based on regime_scores
+        # For now, use simple regime lookup
+        
+        return base * regime_mult
+
+
 class SignalArbitrator:
 
     """Арбитраж конфликтующих сигналов"""
@@ -475,6 +673,10 @@ class MetaLayer:
         no_trade_zone_max_spread_pct: float = 0.50,
         
         ema_router_config: Optional[Dict[str, Any]] = None,
+        
+        weights_config: Optional[Dict[str, Any]] = None,
+        
+        use_weighted_router: bool = True,
 
     ):
         """
@@ -494,12 +696,20 @@ class MetaLayer:
             no_trade_zone_max_spread_pct: Максимальный спред% для торговли
             
             ema_router_config: Конфигурация EMA-router для выбора pullback/breakout
+            
+            weights_config: Конфигурация весов стратегий для weighted router
+            
+            use_weighted_router: Использовать взвешенный роутер (Task 2)
 
         """
 
         self.strategies = strategies
 
         self.regime_switcher = RegimeSwitcher()
+        
+        self.regime_scorer = RegimeScorer()  # Task 1
+        
+        self.weighted_router = WeightedStrategyRouter(weights_config) if use_weighted_router else None
 
         self.arbitrator = SignalArbitrator()
 
@@ -513,6 +723,8 @@ class MetaLayer:
         self.mtf_score_threshold = mtf_score_threshold
         
         self.high_vol_event_atr_pct = high_vol_event_atr_pct
+        
+        self.use_weighted_router = use_weighted_router
         
         # EMA-router: выбор между pullback/breakout по расстоянию до EMA
         self.ema_router_config = ema_router_config or {}
@@ -608,6 +820,9 @@ class MetaLayer:
             df, 
             high_vol_atr_threshold=self.high_vol_event_atr_pct
         )
+        
+        # Task 1: Compute regime scores
+        regime_scores = self.regime_scorer.compute_scores(df, features)
 
         # Логируем только при смене режима
 
@@ -662,6 +877,8 @@ class MetaLayer:
                 category="strategy_analysis",
 
                 regime=regime,
+                
+                regime_scores=regime_scores,
 
                 active_strategies=active_strategies_info,
 
@@ -682,48 +899,86 @@ class MetaLayer:
                 },
 
             )
-
-        # 5. Арбитраж сигналов
-
-        final_signal = self.arbitrator.arbitrate_signals(signals)
-
-        if final_signal is None and signals:
-
-            signal_logger.log_signal_rejected(
-
-                strategy_name="MetaLayer",
-
+        
+        # 5. Task 2: Use weighted router if enabled, otherwise use old arbitrator
+        
+        if self.use_weighted_router and self.weighted_router and signals:
+            # Weighted routing with observability
+            routing_result = self.weighted_router.route_signals(
+                candidates=signals,
+                regime_scores=regime_scores,
+                regime=regime_scores.get("regime", regime),
                 symbol=features.get("symbol", "UNKNOWN"),
-
-                direction="CONFLICT",
-
-                confidence=0.0,
-
-                reasons=["meta_conflict"],
-
-                values={
-
-                    "signals": [
-
-                        {
-
-                            "strategy": s.get("strategy"),
-
-                            "signal": s.get("signal"),
-
-                            "confidence": s.get("confidence"),
-
-                            "reasons": s.get("reasons", []),
-
-                        }
-
-                        for s in signals
-
-                    ]
-
-                },
-
+                mtf_score=None  # Will be computed later if MTF enabled
             )
+            
+            final_signal = routing_result.get("selected")
+            all_candidates = routing_result.get("all_candidates", [])
+            
+            # Task 8: Log all candidates with observability
+            self._log_candidate_decisions(
+                all_candidates=all_candidates,
+                selected=final_signal,
+                regime=regime,
+                regime_scores=regime_scores,
+                symbol=features.get("symbol", "UNKNOWN")
+            )
+            
+            # If no signal selected due to conflict, log rejection
+            if final_signal is None and signals:
+                signal_logger.log_signal_rejected(
+                    strategy_name="MetaLayer",
+                    symbol=features.get("symbol", "UNKNOWN"),
+                    direction="CONFLICT",
+                    confidence=0.0,
+                    reasons=["weighted_router_conflict"],
+                    values={
+                        "num_candidates": len(signals),
+                        "rejection_summary": routing_result.get("rejection_summary", {})
+                    },
+                )
+        else:
+            # Old arbitrator path (backward compatibility)
+            final_signal = self.arbitrator.arbitrate_signals(signals)
+            
+            # Old path conflict logging
+            if final_signal is None and signals:
+
+                signal_logger.log_signal_rejected(
+
+                    strategy_name="MetaLayer",
+
+                    symbol=features.get("symbol", "UNKNOWN"),
+
+                    direction="CONFLICT",
+
+                    confidence=0.0,
+
+                    reasons=["meta_conflict"],
+
+                    values={
+
+                        "signals": [
+
+                            {
+
+                                "strategy": s.get("strategy"),
+
+                                "signal": s.get("signal"),
+
+                                "confidence": s.get("confidence"),
+
+                                "reasons": s.get("reasons", []),
+
+                            }
+
+                            for s in signals
+
+                        ]
+
+                    },
+
+                )
 
         if final_signal:
 
@@ -949,6 +1204,61 @@ class MetaLayer:
                 f"→ all candidates"
             )
             return candidates
+
+    def _log_candidate_decisions(
+        self,
+        all_candidates: List[Dict[str, Any]],
+        selected: Optional[Dict[str, Any]],
+        regime: str,
+        regime_scores: Dict[str, float],
+        symbol: str
+    ):
+        """
+        Task 8: Log all candidates with observability.
+        
+        Structured JSON log per decision with:
+        - All candidates (raw/scaled conf, weight, final_score, direction)
+        - Rejected candidates with reasons
+        - Selected signal with top factors
+        """
+        decision_log = {
+            "symbol": symbol,
+            "regime": regime,
+            "regime_scores": regime_scores,
+            "candidates": [],
+            "selected_strategy": selected.get("strategy") if selected else None,
+            "selected_direction": selected.get("signal") if selected else None,
+            "selected_final_score": selected["_scoring"]["final_score"] if selected and "_scoring" in selected else None
+        }
+        
+        # Log each candidate
+        for candidate in all_candidates:
+            scoring = candidate.get("_scoring", {})
+            candidate_info = {
+                "strategy": candidate.get("strategy"),
+                "direction": candidate.get("signal"),
+                "raw_confidence": scoring.get("raw_confidence"),
+                "scaled_confidence": scoring.get("raw_confidence"),  # Will be updated in Task 4
+                "strategy_weight": scoring.get("strategy_weight"),
+                "final_score": scoring.get("final_score"),
+                "rejection_reason": candidate.get("_rejection_reason"),
+                "key_values": {
+                    k: v for k, v in candidate.get("values", {}).items()
+                    if k in ["adx", "ema_distance_atr", "volume_zscore", "atr_percent"]
+                }
+            }
+            decision_log["candidates"].append(candidate_info)
+        
+        # Log via signal_logger
+        signal_logger.log_debug_info(
+            category="weighted_router_decision",
+            **decision_log
+        )
+        
+        logger.info(
+            f"Weighted router decision: {len(all_candidates)} candidates, "
+            f"selected={decision_log['selected_strategy']} {decision_log['selected_direction']}"
+        )
 
     def _adjust_strategies_by_regime(self, regime: str, df: Optional[pd.DataFrame] = None):
         """Включить/выключить стратегии в зависимости от режима и EMA-router"""
