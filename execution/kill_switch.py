@@ -493,13 +493,14 @@ class KillSwitchManager:
 
         try:
 
-            # Use Bybit API v5 to get positions
-            response = self.client.post(
+            # Use Bybit API v5 to get positions (GET request with signed=True)
+            response = self.client.get(
                 "/v5/position/list",
                 params={
                     "category": "linear",
                     "settleCoin": "USDT",
-                }
+                },
+                signed=True
             )
 
             if response and response.get("retCode") == 0:
