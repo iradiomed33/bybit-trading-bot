@@ -36,6 +36,7 @@ logger = setup_logger(__name__)
 
 
 # Fallback значения для популярных символов (если instruments-info не работает на testnet)
+# Значения взяты из реальных спецификаций Bybit для perpetual futures
 DEFAULT_INSTRUMENT_PARAMS = {
     "BTCUSDT": {
         "tickSize": "0.1",
@@ -66,11 +67,11 @@ DEFAULT_INSTRUMENT_PARAMS = {
     },
     "XRPUSDT": {
         "tickSize": "0.0001",
-        "qtyStep": "1",
-        "minOrderQty": "1",
+        "qtyStep": "0.1",
+        "minOrderQty": "0.1",
         "maxOrderQty": "100000.0",
         "minNotional": "5.0",
-        "basePrecision": 0,
+        "basePrecision": 1,
         "quotePrecision": 4,
     },
 }
@@ -175,35 +176,34 @@ class InstrumentsManager:
 
                     continue
 
-                # Парсируем параметры округления
-
-                price_scale = int(instrument.get("priceScale", 0))
-
-                qty_scale = int(instrument.get("qtyScale", 0))
-
-                # Получаем минималы
-
+                # Получаем фильтры напрямую из API response
+                price_filter = instrument.get("priceFilter", {})
                 lot_size_filter = instrument.get("lotSizeFilter", {})
 
-                quote_precision = instrument.get("quotePrecision", 0)
+                # Используем значения напрямую из фильтров (не scale!)
+                tick_size = price_filter.get("tickSize", "0.01")
+                qty_step = lot_size_filter.get("qtyStep", "0.001")
+                min_order_qty = lot_size_filter.get("minOrderQty", "0")
+                max_order_qty = lot_size_filter.get("maxOrderQty", "0")
+                min_notional = lot_size_filter.get("minNotionalValue", "0")
 
                 instruments[symbol] = {
 
                     "symbol": symbol,
 
-                    "tickSize": self._scale_to_decimal(price_scale),
+                    "tickSize": Decimal(tick_size),
 
-                    "qtyStep": self._scale_to_decimal(qty_scale),
+                    "qtyStep": Decimal(qty_step),
 
-                    "minOrderQty": Decimal(lot_size_filter.get("minOrderQty", "0")),
+                    "minOrderQty": Decimal(min_order_qty),
 
-                    "maxOrderQty": Decimal(lot_size_filter.get("maxOrderQty", "0")),
+                    "maxOrderQty": Decimal(max_order_qty),
 
-                    "minNotional": Decimal(instrument.get("minNotional", "0")),
+                    "minNotional": Decimal(min_notional),
 
-                    "basePrecision": qty_scale,
+                    "basePrecision": len(qty_step.split('.')[-1]) if '.' in qty_step else 0,
 
-                    "quotePrecision": quote_precision,
+                    "quotePrecision": len(tick_size.split('.')[-1]) if '.' in tick_size else 0,
 
                 }
 
