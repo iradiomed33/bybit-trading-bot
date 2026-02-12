@@ -659,7 +659,7 @@ class TradingBot:
                     # Обновляем каждую активную позицию
                     for symbol in list(self.position_manager.active_positions.keys()):
                         # Получаем текущий размер позиции из position_state_manager
-                        current_size = float(normalized_qty) if symbol == self.symbol else 0
+                        current_size = 0  # Default: no position
                         if self.position_state_manager and self.position_state_manager.has_position():
                             pos = self.position_state_manager.get_position()
                             if pos and pos.symbol == symbol:
