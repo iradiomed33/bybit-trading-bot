@@ -418,12 +418,13 @@ class StopLossTakeProfitManager:
             # Получаем клиента для проверки позиции
             if hasattr(self.order_manager, 'client'):
                 try:
-                    positions_response = self.order_manager.client.post(
+                    positions_response = self.order_manager.client.get(
                         "/v5/position/list",
                         params={
                             "category": category,
                             "symbol": levels.symbol,
-                        }
+                        },
+                        signed=True
                     )
                     
                     # Проверяем, есть ли открытая позиция

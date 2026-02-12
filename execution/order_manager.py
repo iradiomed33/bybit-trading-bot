@@ -279,12 +279,13 @@ class OrderManager:
             # Используем get_orders для поиска по orderLinkId
             # Примечание: Bybit API не позволяет прямой поиск по orderLinkId,
             # но мы можем получить список активных ордеров
-            response = self.client.post(
+            response = self.client.get(
                 "/v5/order/realtime",
                 params={
                     "category": "linear",  # TODO: передавать category
                     "orderLinkId": order_link_id,
-                }
+                },
+                signed=True
             )
 
             result = OrderResult.from_api_response(response)
