@@ -432,6 +432,29 @@
                                                     <input type="number" class="form-control advanced-input" id="settingMtfScoreThreshold" data-testid="settings-advanced-mtf-threshold" min="0.1" max="1" step="0.05" value="0.65">
                                                     <small class="form-text text-muted">Порог MTF-скоринга (0..1)</small>
                                                 </div>
+                                                
+                                                <h6 class="mb-3 mt-4">Volume Confirmation</h6>
+                                                <div class="mb-3">
+                                                    <label class="form-label">
+                                                        Режим подтверждения объёмом
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Off = фильтр отключен | Auto = автоматически по риск-профилю (Conservative=строгий, Aggressive=мягкий) | Custom = ручная настройка порога"></i>
+                                                    </label>
+                                                    <select class="form-select advanced-input" id="settingVolumeConfirmationMode" data-testid="settings-advanced-volume-mode">
+                                                        <option value="off">Off (отключен)</option>
+                                                        <option value="auto" selected>Auto (по риск-профилю)</option>
+                                                        <option value="custom">Custom (ручной порог)</option>
+                                                    </select>
+                                                    <small class="form-text text-muted">Auto использует значения из риск-профиля</small>
+                                                    <small class="form-text text-info d-block" id="volumeAutoHint"></small>
+                                                </div>
+                                                <div class="mb-3" id="volumeCustomThresholdContainer" style="display: none;">
+                                                    <label class="form-label">
+                                                        Минимальный Volume Z-score
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Порог z-score объёма (стандартные отклонения от среднего). >0 = выше среднего, <0 = разрешать ниже среднего. Пример: 0.5 = торговать при объёме на +0.5σ выше среднего"></i>
+                                                    </label>
+                                                    <input type="number" class="form-control advanced-input" id="settingVolumeZThreshold" data-testid="settings-advanced-volume-z" min="-2" max="3" step="0.1" value="0.2">
+                                                    <small class="form-text text-muted">Z-score: стандартные отклонения от среднего объёма</small>
+                                                </div>
                                             </div>
                                         </div>
                                         

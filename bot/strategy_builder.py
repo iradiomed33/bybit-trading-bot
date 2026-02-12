@@ -123,6 +123,7 @@ class StrategyBuilder:
         entry_zone_atr_low = self.config.get(f"{config_key}.entry_zone_atr_low", -0.5)
         entry_zone_atr_high = self.config.get(f"{config_key}.entry_zone_atr_high", 0.2)
         volume_z_threshold = self.config.get(f"{config_key}.volume_z_threshold", 1.0)
+        volume_confirmation_mode = self.config.get(f"{config_key}.volume_confirmation_mode", "auto")
         
         logger.info(f"\n  [TrendPullback Config]")
         logger.info(f"    min_adx: {min_adx}")
@@ -133,7 +134,7 @@ class StrategyBuilder:
         logger.info(f"    enable_liquidation_filter: {enable_liquidation_filter}")
         logger.info(f"    entry_mode: {entry_mode}")
         logger.info(f"    entry_zone: [{entry_zone_atr_low}, {entry_zone_atr_high}] ATRs")
-        logger.info(f"    volume_z_threshold: {volume_z_threshold}")
+        logger.info(f"    volume_confirmation: {volume_confirmation_mode} | threshold: {volume_z_threshold}")
         
         strategy = TrendPullbackStrategy(
             min_adx=float(min_adx),

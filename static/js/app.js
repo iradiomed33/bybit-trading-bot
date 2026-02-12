@@ -21,7 +21,8 @@ const RISK_PROFILES = {
         max_spread_pct: 0.30,
         orderbook_sanity_max_deviation_pct: 2.0,
         use_mtf: true,
-        mtf_score_threshold: 0.75
+        mtf_score_threshold: 0.75,
+        volume_z_threshold: 0.5  // Торговать только при объёме выше среднего
     },
     'Balanced': {
         high_vol_event_atr_pct: 7.0,
@@ -29,7 +30,8 @@ const RISK_PROFILES = {
         max_spread_pct: 0.50,
         orderbook_sanity_max_deviation_pct: 3.0,
         use_mtf: true,
-        mtf_score_threshold: 0.65
+        mtf_score_threshold: 0.65,
+        volume_z_threshold: 0.2  // Умеренное требование к объёму
     },
     'Aggressive': {
         high_vol_event_atr_pct: 9.0,
@@ -37,7 +39,8 @@ const RISK_PROFILES = {
         max_spread_pct: 0.80,
         orderbook_sanity_max_deviation_pct: 5.0,
         use_mtf: false,
-        mtf_score_threshold: 0.55
+        mtf_score_threshold: 0.55,
+        volume_z_threshold: 0.0  // Разрешать торговлю даже при среднем/ниже среднего объёме
     }
 };
 
@@ -337,6 +340,30 @@ function initEventListeners() {
             advancedTouched = true;
         });
     });
+    
+    // Volume confirmation mode change handler
+    document.getElementById('settingVolumeConfirmationMode').addEventListener('change', toggleVolumeCustomThreshold);
+}
+
+// Toggle visibility of custom volume threshold field
+function toggleVolumeCustomThreshold() {
+    const mode = document.getElementById('settingVolumeConfirmationMode').value;
+    const customContainer = document.getElementById('volumeCustomThresholdContainer');
+    const autoHint = document.getElementById('volumeAutoHint');
+    
+    if (mode === 'custom') {
+        customContainer.style.display = 'block';
+        autoHint.textContent = '';
+    } else {
+        customContainer.style.display = 'none';
+        if (mode === 'auto') {
+            const riskProfile = document.getElementById('settingRiskProfile').value;
+            const preset = RISK_PROFILES[riskProfile];
+            autoHint.textContent = `Текущий порог для ${riskProfile}: ${preset.volume_z_threshold}σ`;
+        } else {
+            autoHint.textContent = '';
+        }
+    }
 }
 
 // Tab switching
@@ -653,6 +680,13 @@ async function loadSettings() {
     document.getElementById('settingUseMTF').checked = configData.meta_layer?.use_mtf || false;
     document.getElementById('settingMtfScoreThreshold').value = configData.meta_layer?.mtf_score_threshold || 0.65;
     
+    // Load volume confirmation settings
+    document.getElementById('settingVolumeConfirmationMode').value = configData.strategies?.TrendPullback?.volume_confirmation_mode || 'auto';
+    document.getElementById('settingVolumeZThreshold').value = configData.strategies?.TrendPullback?.volume_z_threshold || 0.2;
+    
+    // Show/hide custom threshold based on mode
+    toggleVolumeCustomThreshold();
+    
     // Load legacy settings
     document.getElementById('settingStopLoss').value = configData.risk_management?.stop_loss_percent || 2.0;
     document.getElementById('settingTakeProfit').value = configData.risk_management?.take_profit_percent || 5.0;
@@ -714,8 +748,27 @@ async function saveSettings() {
         'no_trade_zone.max_atr_pct': parseFloat(document.getElementById('settingNoTradeMaxAtr').value),
         'no_trade_zone.max_spread_pct': parseFloat(document.getElementById('settingNoTradeMaxSpread').value),
     };
+    
+    // Volume confirmation settings (for TrendPullback strategy)
+    // If mode is "auto", use value from risk profile; if "off", use -999; if "custom", use user value
+    const volumeMode = document.getElementById('settingVolumeConfirmationMode').value;
+    let volumeThreshold;
+    
+    if (volumeMode === 'off') {
+        volumeThreshold = -999.0;  // Very low threshold = effectively disabled
+    } else if (volumeMode === 'auto') {
+        const riskProfile = document.getElementById('settingRiskProfile').value;
+        const preset = RISK_PROFILES[riskProfile];
+        volumeThreshold = preset ? preset.volume_z_threshold : 0.2;
+    } else {  // custom
+        volumeThreshold = parseFloat(document.getElementById('settingVolumeZThreshold').value);
+    }
+    
+    updates['strategies.TrendPullback.volume_confirmation_mode'] = volumeMode;
+    updates['strategies.TrendPullback.volume_z_threshold'] = volumeThreshold;
 
     console.log('[saveSettings] Saving with symbols:', symbols);
+    console.log('[saveSettings] Volume confirmation:', volumeMode, '| threshold:', volumeThreshold);
     
     let saved = true;
     for (const [key, value] of Object.entries(updates)) {
@@ -746,6 +799,9 @@ async function saveSettings() {
 function onRiskProfileChange() {
     const profile = document.getElementById('settingRiskProfile').value;
     
+    // Update volume confirmation auto hint
+    toggleVolumeCustomThreshold();
+    
     // Only apply preset if advanced settings haven't been manually touched
     if (!advancedTouched) {
         applyRiskProfile(profile);
@@ -771,8 +827,9 @@ function applyRiskProfile(profileName) {
     document.getElementById('settingOrderbookSanity').value = preset.orderbook_sanity_max_deviation_pct;
     document.getElementById('settingUseMTF').checked = preset.use_mtf;
     document.getElementById('settingMtfScoreThreshold').value = preset.mtf_score_threshold;
+    document.getElementById('settingVolumeZThreshold').value = preset.volume_z_threshold;
     
-    console.log('[applyRiskProfile] Applied preset:', profileName);
+    console.log('[applyRiskProfile] Applied preset:', profileName, '| volume_z:', preset.volume_z_threshold);
 }
 
 // Reset advanced settings to current risk profile
