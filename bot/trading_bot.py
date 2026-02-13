@@ -28,6 +28,8 @@ from decimal import Decimal
 
 import numpy as np
 
+import pandas as pd
+
 from storage.database import Database
 
 from exchange.market_data import MarketDataClient
