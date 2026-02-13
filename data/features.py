@@ -512,21 +512,21 @@ class FeaturePipeline:
 
         lower_wick = df[["close", "open"]].min(axis=1) - df["low"]
 
-        # Если тень > 3x тела - аномалия
+        # Если тень > 5x тела - аномалия (смягчено с 3x для 1min)
 
-        df["anomaly_wick"] = ((upper_wick > 3 * body) | (lower_wick > 3 * body)).astype(int)
+        df["anomaly_wick"] = ((upper_wick > 5 * body) | (lower_wick > 5 * body)).astype(int)
 
-        # Низкий объём (< 20% от среднего)
+        # Низкий объём (< 5% от среднего) - смягчено с 20% для 1min
 
         volume_mean = df["volume"].rolling(50).mean()
 
-        df["anomaly_low_volume"] = (df["volume"] < 0.2 * volume_mean).astype(int)
+        df["anomaly_low_volume"] = (df["volume"] < 0.05 * volume_mean).astype(int)
 
-        # Гэп (разрыв между свечами > 1% от цены)
+        # Гэп (разрыв между свечами > 3% от цены) - смягчено с 1% для крипты
 
         price_gap = abs(df["open"] - df["close"].shift(1))
 
-        df["anomaly_gap"] = ((price_gap / df["close"]) > 0.01).astype(int)
+        df["anomaly_gap"] = ((price_gap / df["close"]) > 0.03).astype(int)
 
         # Общий флаг аномалии
 
