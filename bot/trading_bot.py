@@ -1312,13 +1312,13 @@ class TradingBot:
 
                         qty_vol, _ = self.volatility_position_sizer.calculate_position_size(
 
-                            account=Decimal(str(account_balance)),
+                            account_balance=Decimal(str(account_balance)),
 
                             entry_price=Decimal(str(signal["entry_price"])),
 
                             atr=atr_decimal,
 
-                            signal=signal.get("signal", "long"),
+                            signal=signal,
                             
                             symbol=self.symbol,
 
@@ -1785,13 +1785,13 @@ class TradingBot:
 
                                 self.volatility_position_sizer.calculate_position_size(
 
-                                    account=Decimal(str(account_balance)),
+                                    account_balance=Decimal(str(account_balance)),
 
                                     entry_price=Decimal(str(signal["entry_price"])),
 
                                     atr=atr_decimal,
 
-                                    signal=signal.get("signal", "long"),
+                                    signal=signal,
                                     
                                     symbol=self.symbol,
 

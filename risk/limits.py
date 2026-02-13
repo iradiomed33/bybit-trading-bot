@@ -46,7 +46,7 @@ class RiskLimits:
 
         max_concurrent_positions: int = 3,
 
-        max_exposure_per_symbol_percent: float = 30.0,
+        max_exposure_per_symbol_percent: float = 500.0,
 
     ):
         """
