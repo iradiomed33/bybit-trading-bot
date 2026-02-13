@@ -616,12 +616,18 @@ class TradingBot:
                 orderbook_sanity_max_deviation_pct = float(
                     self.config.get("market_data.orderbook_sanity_max_deviation_pct", 3.0)
                 )
+                
+                # Get kline_interval for adaptive anomaly detection thresholds
+                kline_interval_minutes = int(self.config.get("market_data.kline_interval", "60"))
+                is_testnet = self.testnet
 
                 df_with_features = self.pipeline.build_features(
 
                     df_limited, 
                     orderbook=data.get("orderbook"),
-                    orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
+                    orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct,
+                    kline_interval_minutes=kline_interval_minutes,
+                    is_testnet=is_testnet
 
                 )
 

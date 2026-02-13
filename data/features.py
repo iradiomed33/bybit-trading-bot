@@ -486,7 +486,12 @@ class FeaturePipeline:
 
         return features
 
-    def detect_data_anomalies(self, df: pd.DataFrame) -> pd.DataFrame:
+    def detect_data_anomalies(
+        self, 
+        df: pd.DataFrame,
+        kline_interval_minutes: int = 1,
+        is_testnet: bool = True
+    ) -> pd.DataFrame:
         """
 
         Блок 7: Data Quality & Anomalies
@@ -499,10 +504,47 @@ class FeaturePipeline:
         - Низкая ликвидность (малый объём)
 
         - Пропуски данных
+        
+        Thresholds automatically adapt based on:
+        - Timeframe (1min = volatile, 1hour = stable)
+        - Network (testnet = tolerant of API glitches, mainnet = strict)
 
         """
 
-        logger.debug("Detecting data anomalies...")
+        logger.debug(f"Detecting data anomalies (TF={kline_interval_minutes}min, testnet={is_testnet})...")
+
+        # Адаптивные пороги в зависимости от таймфрейма
+        if kline_interval_minutes <= 1:
+            # 1min: высокая волатильность
+            wick_threshold = 5.0
+            volume_threshold = 0.05  # 5%
+            gap_threshold = 0.03  # 3%
+        elif kline_interval_minutes <= 5:
+            # 5min: средне-высокая волатильность
+            wick_threshold = 4.5
+            volume_threshold = 0.08  # 8%
+            gap_threshold = 0.025  # 2.5%
+        elif kline_interval_minutes <= 60:
+            # 1hour: средняя волатильность
+            wick_threshold = 3.5
+            volume_threshold = 0.12  # 12%
+            gap_threshold = 0.015  # 1.5%
+        else:
+            # 4hour+: низкая волатильность
+            wick_threshold = 3.0
+            volume_threshold = 0.15  # 15%
+            gap_threshold = 0.01  # 1%
+        
+        # Testnet: более толерантные пороги (API может возвращать плохие данные)
+        if is_testnet:
+            wick_threshold += 1.0  # +1.0x для testnet
+            volume_threshold *= 0.5  # 50% от mainnet (более толерантны)
+            gap_threshold *= 1.5  # 150% от mainnet
+        
+        logger.debug(
+            f"Anomaly thresholds: wick={wick_threshold:.1f}x, "
+            f"volume={volume_threshold*100:.1f}%, gap={gap_threshold*100:.1f}%"
+        )
 
         # Аномальные свечи (огромные тени)
 
@@ -512,21 +554,19 @@ class FeaturePipeline:
 
         lower_wick = df[["close", "open"]].min(axis=1) - df["low"]
 
-        # Если тень > 5x тела - аномалия (смягчено с 3x для 1min)
+        df["anomaly_wick"] = ((upper_wick > wick_threshold * body) | (lower_wick > wick_threshold * body)).astype(int)
 
-        df["anomaly_wick"] = ((upper_wick > 5 * body) | (lower_wick > 5 * body)).astype(int)
-
-        # Низкий объём (< 5% от среднего) - смягчено с 20% для 1min
+        # Низкий объём
 
         volume_mean = df["volume"].rolling(50).mean()
 
-        df["anomaly_low_volume"] = (df["volume"] < 0.05 * volume_mean).astype(int)
+        df["anomaly_low_volume"] = (df["volume"] < volume_threshold * volume_mean).astype(int)
 
-        # Гэп (разрыв между свечами > 3% от цены) - смягчено с 1% для крипты
+        # Гэп (разрыв между свечами)
 
         price_gap = abs(df["open"] - df["close"].shift(1))
 
-        df["anomaly_gap"] = ((price_gap / df["close"]) > 0.03).astype(int)
+        df["anomaly_gap"] = ((price_gap / df["close"]) > gap_threshold).astype(int)
 
         # Общий флаг аномалии
 
@@ -669,6 +709,10 @@ class FeaturePipeline:
         ticker_data: Optional[Dict[str, Any]] = None,
         
         orderbook_sanity_max_deviation_pct: float = 3.0,
+        
+        kline_interval_minutes: int = 1,
+        
+        is_testnet: bool = True,
 
     ) -> pd.DataFrame:
         """
@@ -687,6 +731,10 @@ class FeaturePipeline:
             ticker_data: Current ticker data from /v5/market/tickers (for orderbook sanity check)
             
             orderbook_sanity_max_deviation_pct: Max deviation % for orderbook sanity check
+            
+            kline_interval_minutes: Timeframe in minutes (1, 5, 60, etc.) for adaptive thresholds
+            
+            is_testnet: Whether running on testnet (more tolerant thresholds) or mainnet
 
 
         Returns:
@@ -711,7 +759,7 @@ class FeaturePipeline:
 
         # 7. Data quality
 
-        df = self.detect_data_anomalies(df)
+        df = self.detect_data_anomalies(df, kline_interval_minutes=kline_interval_minutes, is_testnet=is_testnet)
 
         # 7b. STR-002: Liquidation wicks detection
 
