@@ -380,6 +380,12 @@ class TradingBot:
         no_trade_zone_max_spread_pct = float(self.config.get("no_trade_zone.max_spread_pct", 0.50))
         ema_router_config = self.config.get("meta_layer.ema_router", {})
         
+        # NEW: Weighted routing config
+        use_weighted_routing = bool(self.config.get("meta_layer.use_weighted_routing", True))
+        strategy_weights_config = self.config.get("meta_layer.strategy_weights", None)
+        confidence_scaling_config = self.config.get("meta_layer.confidence_scaling", None)
+        regime_scorer_config = self.config.get("meta_layer.regime_scorer", None)
+        
         self.meta_layer = MetaLayer(
             strategies,
             use_mtf=use_mtf,
@@ -388,6 +394,10 @@ class TradingBot:
             no_trade_zone_max_atr_pct=no_trade_zone_max_atr_pct,
             no_trade_zone_max_spread_pct=no_trade_zone_max_spread_pct,
             ema_router_config=ema_router_config,
+            use_weighted_routing=use_weighted_routing,
+            strategy_weights_config=strategy_weights_config,
+            confidence_scaling_config=confidence_scaling_config,
+            regime_scorer_config=regime_scorer_config,
         )
 
 
@@ -473,8 +483,57 @@ class TradingBot:
             self.equity_curve = EquityCurve()
 
             logger.info(f"[Paper Trading] initial_balance=${float(paper_config.initial_balance):.2f}, maker_fee={float(paper_config.maker_commission)*100:.03f}%")
+        
+        # Bar-close execution config (NEW)
+        self.evaluate_on_bar_close = bool(self.config.get("execution.evaluate_on_bar_close", True))
+        self._last_bar_timestamp: Optional[int] = None  # Timestamp последнего обработанного бара
 
         logger.info("TradingBot initialized successfully")
+
+    def _is_new_bar(self, df: pd.DataFrame) -> bool:
+        """
+        Проверить появилась ли новая закрытая свеча.
+        
+        Returns:
+            True если это новый бар (timestamp изменился)
+        """
+        if df is None or df.empty:
+            return False
+        
+        current_timestamp = int(df.iloc[-1].get("timestamp", 0))
+        
+        if self._last_bar_timestamp is None:
+            # Первый запуск
+            self._last_bar_timestamp = current_timestamp
+            return True
+        
+        if current_timestamp > self._last_bar_timestamp:
+            # Новый бар
+            self._last_bar_timestamp = current_timestamp
+            return True
+        
+        # Тот же бар
+        return False
+    
+    def _limit_df_for_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ограничить размер df для оптимизации расчёта индикаторов.
+        
+        Returns:
+            Ограниченный df (последние N свечей)
+        """
+        max_candles = int(self.config.get("market_data.max_candles_for_indicators", 200))
+        
+        if df is None or df.empty:
+            return df
+        
+        if len(df) <= max_candles:
+            return df
+        
+        # Берём последние max_candles свечей
+        limited = df.tail(max_candles).copy()
+        logger.debug(f"Limited df from {len(df)} to {len(limited)} candles for indicator calculation")
+        return limited
 
     def run(self):
         """Главный цикл бота"""
@@ -540,13 +599,16 @@ class TradingBot:
 
                 # 2. Строим фичи
                 
+                # Ограничиваем размер df для оптимизации (NEW)
+                df_limited = self._limit_df_for_indicators(data["df"])
+                
                 orderbook_sanity_max_deviation_pct = float(
                     self.config.get("market_data.orderbook_sanity_max_deviation_pct", 3.0)
                 )
 
                 df_with_features = self.pipeline.build_features(
 
-                    data["df"], 
+                    df_limited, 
                     orderbook=data.get("orderbook"),
                     orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
 
@@ -599,6 +661,14 @@ class TradingBot:
                     continue
 
                 # 4. Получаем сигнал от стратегий
+                
+                # Bar-close execution check (NEW)
+                if self.evaluate_on_bar_close:
+                    if not self._is_new_bar(df_with_features):
+                        # Тот же бар - пропускаем генерацию сигнала
+                        logger.debug("Same bar - skipping signal evaluation")
+                        time.sleep(5)  # Короткая пауза
+                        continue
 
                 # Provide runtime flags to MetaLayer/NoTradeZones
                 if not features:
@@ -2381,12 +2451,16 @@ class TradingBot:
                 }
             
             # 2. Строим фичи
+            
+            # Ограничиваем размер df для оптимизации (NEW)
+            df_limited = self._limit_df_for_indicators(data["df"])
+            
             orderbook_sanity_max_deviation_pct = float(
                 self.config.get("market_data.orderbook_sanity_max_deviation_pct", 3.0)
             )
             
             df_with_features = self.pipeline.build_features(
-                data["df"],
+                df_limited,
                 orderbook=data.get("orderbook"),
                 orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
             )
@@ -2410,6 +2484,15 @@ class TradingBot:
                 }
             
             # 4. Получаем сигнал от стратегий
+            
+            # Bar-close execution check (NEW)
+            if self.evaluate_on_bar_close:
+                if not self._is_new_bar(df_with_features):
+                    return {
+                        "status": "no_signal",
+                        "message": "Same bar - skipping signal evaluation (bar-close mode)",
+                    }
+            
             features["is_testnet"] = bool(self.testnet)
             features["allow_anomaly_on_testnet"] = bool(
                 self.config.get("meta_layer.allow_anomaly_on_testnet", True)

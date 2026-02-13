@@ -13,15 +13,20 @@ Meta Layer: управление стратегиями, режимами рын
 
 4. Multi-timeframe confluence - проверяет согласованность на разных ТФ
 
+5. Weighted Strategy Router - динамический выбор стратегий по режиму (NEW)
+
+6. Regime Scorer - непрерывная оценка режима рынка (NEW)
+
 """
 
 
 from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
 
 import pandas as pd
 
 from strategy.base_strategy import BaseStrategy
-
+from strategy.regime_scorer import RegimeScorer, RegimeScores
 from data.timeframe_cache import TimeframeCache
 
 from logger import setup_logger
@@ -32,6 +37,36 @@ from signal_logger import get_signal_logger
 logger = setup_logger(__name__)
 
 signal_logger = get_signal_logger()
+
+
+@dataclass
+class SignalCandidate:
+    """Кандидат сигнала с метаданными для scoring"""
+    
+    strategy_name: str
+    raw_signal: Dict[str, Any]      # Оригинальный сигнал от стратегии
+    raw_confidence: float           # Исходная уверенность
+    scaled_confidence: float        # Нормализованная уверенность
+    strategy_weight: float          # Вес стратегии (по режиму)
+    mtf_multiplier: float           # MTF множитель (1.0 если MTF выключен)
+    final_score: float              # Итоговый score
+    rejected: bool                  # Флаг отклонения
+    rejection_reasons: List[str]    # Причины отклонения
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Сериализация для логирования"""
+        return {
+            "strategy": self.strategy_name,
+            "signal": self.raw_signal.get("signal"),
+            "raw_confidence": round(self.raw_confidence, 3),
+            "scaled_confidence": round(self.scaled_confidence, 3),
+            "strategy_weight": round(self.strategy_weight, 3),
+            "mtf_multiplier": round(self.mtf_multiplier, 3),
+            "final_score": round(self.final_score, 3),
+            "rejected": self.rejected,
+            "rejection_reasons": self.rejection_reasons,
+            "reasons": self.raw_signal.get("reasons", []),
+        }
 
 
 class RegimeSwitcher:
@@ -475,6 +510,12 @@ class MetaLayer:
         no_trade_zone_max_spread_pct: float = 0.50,
         
         ema_router_config: Optional[Dict[str, Any]] = None,
+        
+        # NEW: Weighted routing parameters
+        use_weighted_routing: bool = True,
+        strategy_weights_config: Optional[Dict[str, Any]] = None,
+        confidence_scaling_config: Optional[Dict[str, Any]] = None,
+        regime_scorer_config: Optional[Dict[str, Any]] = None,
 
     ):
         """
@@ -494,6 +535,14 @@ class MetaLayer:
             no_trade_zone_max_spread_pct: Максимальный спред% для торговли
             
             ema_router_config: Конфигурация EMA-router для выбора pullback/breakout
+            
+            use_weighted_routing: Использовать weighted strategy routing
+            
+            strategy_weights_config: Конфигурация весов стратегий по режимам
+            
+            confidence_scaling_config: Конфигурация нормализации confidence
+            
+            regime_scorer_config: Конфигурация RegimeScorer
 
         """
 
@@ -519,6 +568,18 @@ class MetaLayer:
         self._ema_route_state = None  # "near" | "far" | None (для гистерезиса)
 
         self.timeframe_cache = TimeframeCache() if use_mtf else None
+        
+        # NEW: Weighted routing
+        self.use_weighted_routing = use_weighted_routing
+        self.strategy_weights_config = strategy_weights_config or self._default_weights_config()
+        self.confidence_scaling_config = confidence_scaling_config or {}
+        
+        # NEW: RegimeScorer
+        scorer_params = regime_scorer_config or {}
+        self.regime_scorer = RegimeScorer(**scorer_params) if use_weighted_routing else None
+        
+        # Кэш последнего regime scoring (для reduce API calls)
+        self._last_regime_scores: Optional[RegimeScores] = None
 
         logger.info(
 
@@ -528,9 +589,354 @@ class MetaLayer:
             
             f"high_vol_event_atr_pct={high_vol_event_atr_pct}, "
             
+            f"weighted_routing={use_weighted_routing}, "
+            
             f"ema_router={'enabled' if self.ema_router_config.get('enabled') else 'disabled'})"
 
         )
+    
+    def _default_weights_config(self) -> Dict[str, Any]:
+        """Конфигурация весов по умолчанию"""
+        return {
+            "TrendPullback": {
+                "base_weight": 1.0,
+                "regime_multipliers": {
+                    "trend_up": 1.5,
+                    "trend_down": 1.5,
+                    "range": 0.5,
+                    "high_vol": 0.7,
+                    "choppy": 0.3,
+                    "unknown": 0.8,
+                }
+            },
+            "Breakout": {
+                "base_weight": 1.0,
+                "regime_multipliers": {
+                    "trend_up": 0.7,
+                    "trend_down": 0.7,
+                    "range": 1.5,
+                    "high_vol": 0.8,
+                    "choppy": 0.4,
+                    "unknown": 0.9,
+                }
+            },
+            "MeanReversion": {
+                "base_weight": 1.0,
+                "regime_multipliers": {
+                    "trend_up": 0.3,
+                    "trend_down": 0.3,
+                    "range": 1.5,
+                    "high_vol": 0.2,
+                    "choppy": 0.6,
+                    "unknown": 0.7,
+                }
+            },
+        }
+    
+    def _get_strategy_weight(self, strategy_name: str, regime_label: str) -> float:
+        """
+        Вычислить вес стратегии для данного режима.
+        
+        Returns:
+            weight = base_weight * regime_multiplier
+        """
+        config = self.strategy_weights_config.get(strategy_name, {})
+        base_weight = config.get("base_weight", 1.0)
+        multipliers = config.get("regime_multipliers", {})
+        regime_mult = multipliers.get(regime_label, 1.0)
+        
+        return base_weight * regime_mult
+    
+    def _scale_confidence(self, confidence: float, strategy_name: str) -> float:
+        """
+        Нормализовать confidence стратегии.
+        
+        scaled = clamp(multiplier * raw + offset, 0, 1)
+        """
+        if not self.confidence_scaling_config.get("enabled", False):
+            return confidence
+        
+        config = self.confidence_scaling_config.get(strategy_name, {})
+        multiplier = config.get("multiplier", 1.0)
+        offset = config.get("offset", 0.0)
+        
+        scaled = multiplier * confidence + offset
+        return max(0.0, min(scaled, 1.0))
+    
+    def _collect_candidates(
+        self,
+        df: pd.DataFrame,
+        features: Dict[str, Any],
+        regime_scores: RegimeScores
+    ) -> List[SignalCandidate]:
+        """
+        Собрать всех кандидатов от ВСЕХ стратегий (игнорируя is_enabled).
+        
+        Returns:
+            Список SignalCandidate с вычисленными scores
+        """
+        candidates = []
+        regime_label = regime_scores.regime_label
+        
+        for strategy in self.strategies:
+            # Временно включаем ВСЕ стратегии для сбора кандидатов
+            was_enabled = strategy.is_enabled
+            strategy.enable()
+            
+            try:
+                signal = strategy.generate_signal(df, features)
+            finally:
+                # Возвращаем состояние
+                if not was_enabled:
+                    strategy.disable()
+            
+            if signal is None:
+                continue
+            
+            # Извлекаем confidence
+            raw_confidence = signal.get("confidence", 0.0)
+            scaled_confidence = self._scale_confidence(raw_confidence, strategy.name)
+            
+            # Вычисляем вес стратегии
+            strategy_weight = self._get_strategy_weight(strategy.name, regime_label)
+            
+            # MTF multiplier (будет применён позже, если passed)
+            mtf_multiplier = 1.0
+            
+            # Итоговый score (предварительный, без MTF)
+            final_score = scaled_confidence * strategy_weight
+            
+            candidate = SignalCandidate(
+                strategy_name=strategy.name,
+                raw_signal=signal,
+                raw_confidence=raw_confidence,
+                scaled_confidence=scaled_confidence,
+                strategy_weight=strategy_weight,
+                mtf_multiplier=mtf_multiplier,
+                final_score=final_score,
+                rejected=False,
+                rejection_reasons=[],
+            )
+            
+            candidates.append(candidate)
+        
+        return candidates
+    
+    def _apply_hygiene_filters(
+        self,
+        candidates: List[SignalCandidate],
+        df: pd.DataFrame,
+        features: Dict[str, Any]
+    ) -> List[SignalCandidate]:
+        """
+        Применить hygiene filters к кандидатам.
+        
+        Фильтры:
+        1. Max spread % (no_trade_zone.max_spread_pct)
+        2. Max ATR % (no_trade_zone.max_atr_pct)
+        3. Data anomaly (allow_anomaly_on_testnet)
+        4. Orderbook validity
+        5. Optional: минимальная глубина
+        
+        Отклонённые кандидаты помечаются rejected=True + rejection_reasons.
+        """
+        latest = df.iloc[-1]
+        is_testnet = bool(features.get("is_testnet", False))
+        allow_anomaly = bool(features.get("allow_anomaly_on_testnet", False))
+        
+        # Извлекаем метрики
+        spread_percent = features.get("spread_percent", latest.get("spread_percent"))
+        atr_percent = latest.get("atr_percent", 0.0)
+        has_anomaly = latest.get("has_anomaly", 0)
+        orderbook_invalid = features.get("orderbook_invalid", False) or latest.get("orderbook_invalid", False)
+        depth_imbalance = features.get("depth_imbalance", latest.get("depth_imbalance", 0))
+        
+        for candidate in candidates:
+            if candidate.rejected:
+                continue  # Уже отклонён
+            
+            # Filter 1: Excessive spread
+            if spread_percent is not None and spread_percent > self.no_trade_zones.max_spread_pct:
+                candidate.rejected = True
+                candidate.rejection_reasons.append("no_trade_zone_spread")
+                continue
+            
+            # Filter 2: Extreme volatility
+            if atr_percent > self.no_trade_zones.max_atr_pct:
+                candidate.rejected = True
+                candidate.rejection_reasons.append("no_trade_zone_atr")
+                continue
+            
+            # Filter 3: Data anomaly
+            if has_anomaly == 1:
+                if not (is_testnet and allow_anomaly):
+                    candidate.rejected = True
+                    candidate.rejection_reasons.append("anomaly_block")
+                    continue
+            
+            # Filter 4: Orderbook invalid
+            if orderbook_invalid:
+                candidate.rejected = True
+                candidate.rejection_reasons.append("orderbook_invalid")
+                continue
+            
+            # Filter 5 (optional): Severe orderbook imbalance
+            # Закомментировано т.к. на testnet может быть слишком строго
+            # if abs(depth_imbalance) > 0.99:
+            #     candidate.rejected = True
+            #     candidate.rejection_reasons.append("orderbook_imbalance")
+            #     continue
+        
+        return candidates
+    
+    def _get_signal_weighted(
+        self,
+        df: pd.DataFrame,
+        features: Dict[str, Any],
+        error_count: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Weighted routing: новая логика выбора через scoring кандидатов.
+        
+        Steps:
+        1. Оценить режим рынка (RegimeScorer)
+        2. Собрать всех кандидатов от стратегий
+        3. Применить confidence scaling
+        4. Вычислить веса и scores
+        5. Применить hygiene filters
+        6. Применить MTF (опционально)
+        7. Выбрать лучшего кандидата
+        8. Логировать все кандидаты и решение
+        """
+        symbol = features.get("symbol", "UNKNOWN")
+        
+        # 1. Regime Scoring
+        regime_scores = self.regime_scorer.score_regime(df, features)
+        self._last_regime_scores = regime_scores
+        
+        # Логируем regime scores
+        signal_logger.log_debug_info(
+            category="regime_scoring",
+            regime=regime_scores.regime_label,
+            regime_scores=regime_scores.to_dict(),
+        )
+        
+        # 2. Собираем кандидатов от всех стратегий
+        candidates = self._collect_candidates(df, features, regime_scores)
+        
+        if not candidates:
+            # Ни одна стратегия не дала сигнал
+            signal_logger.log_debug_info(
+                category="strategy_analysis",
+                regime=regime_scores.regime_label,
+                active_strategies=[s.name for s in self.strategies],
+                candidates_count=0,
+                market_conditions=regime_scores.values,
+            )
+            return None
+        
+        # 3. Hygiene filters
+        candidates = self._apply_hygiene_filters(candidates, df, features)
+        
+        # 4. MTF check (если включён)
+        if self.use_mtf and self.timeframe_cache:
+            for candidate in candidates:
+                if candidate.rejected:
+                    continue
+                
+                signal_direction = candidate.raw_signal.get("signal")
+                
+                # Получаем данные из кэша
+                df_1m = self.timeframe_cache.get_latest("1")
+                df_5m = self.timeframe_cache.get_latest("5")
+                df_15m = self.timeframe_cache.get_latest("15")
+                
+                mtf_result = self.timeframe_cache.check_confluence(
+                    signal_direction, df_1m, df_5m, df_15m
+                )
+                
+                mtf_score = mtf_result.get("score", 0.0)
+                passed = mtf_score >= self.mtf_score_threshold
+                
+                if not passed:
+                    candidate.rejected = True
+                    candidate.rejection_reasons.append("mtf_score_below_threshold")
+                    continue
+                
+                # Обогащаем кандидата MTF информацией
+                candidate.mtf_multiplier = mtf_score
+                candidate.final_score = (
+                    candidate.scaled_confidence *
+                    candidate.strategy_weight *
+                    candidate.mtf_multiplier
+                )
+        
+        # 5. Фильтруем отклонённых
+        valid_candidates = [c for c in candidates if not c.rejected]
+        rejected_candidates = [c for c in candidates if c.rejected]
+        
+        # 6. Логируем всех кандидатов
+        signal_logger.log_debug_info(
+            category="candidate_scoring",
+            regime=regime_scores.regime_label,
+            total_candidates=len(candidates),
+            valid_candidates=len(valid_candidates),
+            rejected_candidates=len(rejected_candidates),
+            candidates=[c.to_dict() for c in candidates],
+        )
+        
+        if not valid_candidates:
+            # Все кандидаты отклонены
+            signal_logger.log_signal_rejected(
+                strategy_name="MetaLayer",
+                symbol=symbol,
+                direction="N/A",
+                confidence=0.0,
+                reasons=["all_candidates_rejected"],
+                values={
+                    "rejected_count": len(rejected_candidates),
+                    "rejection_summary": self._summarize_rejections(rejected_candidates),
+                },
+            )
+            return None
+        
+        # 7. Выбираем лучшего кандидата (max final_score)
+        best_candidate = max(valid_candidates, key=lambda c: c.final_score)
+        
+        # 8. Логируем выбор
+        signal_logger.log_debug_info(
+            category="final_selection",
+            regime=regime_scores.regime_label,
+            selected_strategy=best_candidate.strategy_name,
+            final_score=round(best_candidate.final_score, 3),
+            raw_confidence=round(best_candidate.raw_confidence, 3),
+            scaled_confidence=round(best_candidate.scaled_confidence, 3),
+            strategy_weight=round(best_candidate.strategy_weight, 3),
+            mtf_multiplier=round(best_candidate.mtf_multiplier, 3),
+        )
+        
+        # 9. Подготавливаем финальный сигнал
+        final_signal = dict(best_candidate.raw_signal)
+        final_signal["strategy"] = best_candidate.strategy_name
+        final_signal["regime"] = regime_scores.regime_label
+        final_signal["regime_scores"] = regime_scores.to_dict()
+        final_signal["final_score"] = best_candidate.final_score
+        final_signal["scaled_confidence"] = best_candidate.scaled_confidence
+        final_signal["strategy_weight"] = best_candidate.strategy_weight
+        
+        if self.use_mtf:
+            final_signal["mtf_confirmed"] = True
+            final_signal["mtf_score"] = best_candidate.mtf_multiplier
+        
+        return final_signal
+    
+    def _summarize_rejections(self, rejected: List[SignalCandidate]) -> Dict[str, int]:
+        """Подсчитать причины отклонения"""
+        summary = {}
+        for candidate in rejected:
+            for reason in candidate.rejection_reasons:
+                summary[reason] = summary.get(reason, 0) + 1
+        return summary
 
     def get_signal(
 
@@ -602,6 +1008,11 @@ class MetaLayer:
 
             return None
 
+        # === WEIGHTED ROUTING MODE (NEW) ===
+        if self.use_weighted_routing and self.regime_scorer:
+            return self._get_signal_weighted(df, features, error_count)
+        
+        # === LEGACY MODE (OLD) ===
         # 2. Определяем режим рынка
 
         regime = self.regime_switcher.detect_regime(

@@ -82,6 +82,35 @@ position_management:
       # Можно добавить больше уровней:
       # - r_level: 5.0
       #   percent: 0.25   # Закрыть последние 25%
+  
+  # Regime-adaptive parameters (NEW)
+  # Параметры сопровождения зависят от режима при входе
+  regime_profiles:
+    enabled: true
+    
+    # Профиль для trend режима
+    trend:
+      breakeven_trigger: 2.0        # Позднее BE (дать тренду развиться)
+      trailing_offset_percent: 1.5  # Шире trailing
+      time_stop_minutes: 90         # Дольше держим
+    
+    # Профиль для range режима
+    range:
+      breakeven_trigger: 1.0        # Раннее BE (быстрый выход при откате)
+      trailing_offset_percent: 0.7  # Уже trailing
+      time_stop_minutes: 45         # Быстрее time-stop
+    
+    # Профиль для high_vol режима
+    high_vol:
+      breakeven_trigger: 1.2
+      trailing_offset_percent: 2.0  # Широкий trailing (волатильность)
+      time_stop_minutes: 30         # Быстрый выход
+    
+    # Default fallback
+    default:
+      breakeven_trigger: 1.5
+      trailing_offset_percent: 1.0
+      time_stop_minutes: 60
 
 # ============================================================================
 # ПАРАМЕТРЫ API И ПЕРЕПОДКЛЮЧЕНИЯ
@@ -213,6 +242,82 @@ logging:
   format: "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name} | {message}"
 
 # ============================================================================
+# META LAYER (УПРАВЛЕНИЕ СТРАТЕГИЯМИ)
+# ============================================================================
+meta_layer:
+  # Использовать multi-timeframe confluence
+  use_mtf: true
+  # Порог MTF score для прохождения (0..1)
+  mtf_score_threshold: 0.6
+  
+  # Weighted Strategy Router: веса стратегий по режимам
+  # Итоговый вес = base_weight * regime_multiplier
+  strategy_weights:
+    # Базовые веса (по умолчанию)
+    TrendPullback:
+      base_weight: 1.0
+      # Множители по режимам
+      regime_multipliers:
+        trend_up: 1.5      # Лучше работает в тренде
+        trend_down: 1.5
+        range: 0.5         # Хуже в range
+        high_vol: 0.7
+        choppy: 0.3
+        unknown: 0.8
+    
+    Breakout:
+      base_weight: 1.0
+      regime_multipliers:
+        trend_up: 0.7
+        trend_down: 0.7
+        range: 1.5         # Лучше в range (выход из консолидации)
+        high_vol: 0.8
+        choppy: 0.4        # Плохо работает в пиле
+        unknown: 0.9
+    
+    MeanReversion:
+      base_weight: 1.0
+      regime_multipliers:
+        trend_up: 0.3      # Опасно против тренда
+        trend_down: 0.3
+        range: 1.5         # Лучше в range
+        high_vol: 0.2      # Опасно при высокой волатильности
+        choppy: 0.6
+        unknown: 0.7
+  
+  # Confidence scaling (нормализация уверенности)
+  confidence_scaling:
+    enabled: true
+    # Per-strategy scaling: scaled = clamp(a * raw + b, 0, 1)
+    TrendPullback:
+      multiplier: 1.0
+      offset: 0.0
+    Breakout:
+      multiplier: 1.0
+      offset: 0.0
+    MeanReversion:
+      multiplier: 0.9     # Чуть консервативнее
+      offset: 0.0
+  
+  # No-Trade Zones (условия блокировки торговли)
+  no_trade_zone:
+    max_spread_pct: 0.50       # Максимальный спред %
+    max_atr_pct: 14.0          # Максимальный ATR%
+    allow_anomaly_on_testnet: true  # Разрешить торговлю при аномалиях на testnet
+  
+  # High volatility event detection
+  high_vol_event_atr_pct: 7.0  # Порог ATR% для high_vol режима
+  
+  # Regime Scorer parameters
+  regime_scorer:
+    adx_trend_min: 25.0
+    adx_trend_max: 50.0
+    adx_range_max: 20.0
+    bb_width_range_max: 0.03
+    atr_pct_high: 3.0
+    atr_pct_extreme: 7.0
+
+# ============================================================================
 # УВЕДОМЛЕНИЯ
 # ============================================================================
 notifications:
@@ -262,6 +367,10 @@ circuit_breaker:
 data:
   # Количество свечей для анализа
   kline_limit: 500
+  # Максимальное окно для расчёта индикаторов (оптимизация)
+  # Ограничивает размер df перед расчётом индикаторов
+  # Должно быть >= max(периоды индикаторов) + запас
+  max_candles_for_indicators: 200
   # Глубина стакана для анализа orderflow
   orderbook_depth: 50
   # Интервал обновления данных (сек)
@@ -270,6 +379,21 @@ data:
   fetch_derivatives: true
   # Включить сбор данных orderflow
   fetch_orderflow: true
+
+# ============================================================================
+# EXECUTION (ИСПОЛНЕНИЕ ТОРГОВЫХ РЕШЕНИЙ)
+# ============================================================================
+execution:
+  # Торговать только по закрытию свечи (не на каждом тике)
+  evaluate_on_bar_close: true
+  
+  # Частоты обновления разных источников данных (в секундах)
+  # Используется при evaluate_on_bar_close: false
+  update_intervals:
+    kline: 12          # Основной TF (свечи)
+    orderbook: 5       # Стакан (чаще)
+    funding: 60        # Funding rate (реже)
+    open_interest: 30  # Open interest (средняя частота)
 
 # ============================================================================
 # BACKTEST ПАРАМЕТРЫ (для режима backtest)
