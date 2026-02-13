@@ -1734,6 +1734,11 @@ async def start_bot():
 
         # Get config
         cfg = get_config()
+        
+        # CRITICAL: Reload config from file to get latest changes from UI
+        cfg.reload()
+        logger.info(f"[START_BOT] Config reloaded from {cfg.config_path}")
+        
         mode = cfg.get("trading.mode") or "paper"
         testnet = cfg.get("trading.testnet", True)
         
@@ -1742,6 +1747,7 @@ async def start_bot():
         logger.info(f"[START_BOT] DEBUG: mode = {mode}")
         logger.info(f"[START_BOT] DEBUG: testnet = {testnet}")
         logger.info(f"[START_BOT] DEBUG: config_path = {cfg.config_path}")
+        logger.info(f"[START_BOT] DEBUG: kline_interval = {cfg.get('market_data.kline_interval')}")
 
         # Normalize symbols (supports both trading.symbol and trading.symbols)
         symbols = _normalize_symbols(cfg)
