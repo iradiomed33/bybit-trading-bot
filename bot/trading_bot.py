@@ -502,19 +502,28 @@ class TradingBot:
         if df is None or df.empty:
             return False
         
-        current_timestamp = int(df.iloc[-1].get("timestamp", 0))
+        # Timestamp хранится в индексе DataFrame (не в колонке!)
+        current_timestamp = int(df.index[-1].timestamp() * 1000)  # В миллисекундах
         
         if self._last_bar_timestamp is None:
             # Первый запуск
             self._last_bar_timestamp = current_timestamp
+            logger.info(f"[BAR_CLOSE] First bar: timestamp={current_timestamp} ({df.index[-1]})")
             return True
         
         if current_timestamp > self._last_bar_timestamp:
             # Новый бар
+            logger.info(f"[BAR_CLOSE] New bar detected: {pd.to_datetime(self._last_bar_timestamp, unit='ms')} -> {df.index[-1]}")
             self._last_bar_timestamp = current_timestamp
             return True
         
-        # Тот же бар
+        # Тот же бар - логируем каждые 60 секунд, чтобы не спамить
+        import time
+        now = int(time.time())
+        if not hasattr(self, '_last_same_bar_log') or (now - self._last_same_bar_log) >= 60:
+            logger.info(f"[BAR_CLOSE] Waiting for new bar (current={df.index[-1]})")
+            self._last_same_bar_log = now
+        
         return False
     
     def _limit_df_for_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -668,7 +677,6 @@ class TradingBot:
                 if self.evaluate_on_bar_close:
                     if not self._is_new_bar(df_with_features):
                         # Тот же бар - пропускаем генерацию сигнала
-                        logger.debug("Same bar - skipping signal evaluation")
                         time.sleep(5)  # Короткая пауза
                         continue
 
