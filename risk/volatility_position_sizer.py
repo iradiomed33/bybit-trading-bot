@@ -245,13 +245,10 @@ class VolatilityPositionSizer:
 
             distance_to_sl = atr * self.config.atr_multiplier
 
-            # Position qty = Risk$ / Distance / Price
-
-            # But we want qty such that: qty * distance = risk$
-
-            # So: qty = risk$ / distance
-
-            position_qty = risk_usd / distance_to_sl / entry_price
+            # Position qty = Risk USD / Stop Distance USD
+            # Stop distance is in price units (USD), so qty is in BTC/contracts
+            # Example: risk_usd=0.99, distance=254.91 → qty=0.00388 BTC
+            position_qty = risk_usd / distance_to_sl
 
             method = "volatility"
 
@@ -261,7 +258,7 @@ class VolatilityPositionSizer:
 
                 f"Volatility sizing: ATR={atr:.2f}, Distance={distance_to_sl:.2f}, "
 
-                f"Qty={position_qty:.4f}, Risk=${risk_usd:.2f}"
+                f"Qty={position_qty:.6f}, Risk=${risk_usd:.2f}"
 
             )
 
