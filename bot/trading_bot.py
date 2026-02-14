@@ -2062,7 +2062,8 @@ class TradingBot:
                     if hasattr(self, 'latest_df') and self.latest_df is not None:
                         # Конвертируем последние 30 свечей в список dict
                         lookback = 30
-                        df_candles = self.latest_df[['open', 'high', 'low', 'close', 'timestamp']].tail(lookback)
+                        # timestamp не нужен для market_structure анализа
+                        df_candles = self.latest_df[['open', 'high', 'low', 'close']].tail(lookback)
                         candles = df_candles.to_dict('records')
                     
                     sl_tp_levels = self.sl_tp_manager.calculate_levels(
