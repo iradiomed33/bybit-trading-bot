@@ -41,6 +41,7 @@ from exchange.instruments import InstrumentsManager, normalize_order
 from storage.position_state import PositionStateManager
 
 from execution.stop_loss_tp_manager import StopLossTakeProfitManager, StopLossTPConfig
+from execution.scaled_entry import ScaledEntryManager, ScaledEntryConfig
 
 from execution.position_signal_handler import (
 
@@ -245,12 +246,42 @@ class TradingBot:
                 enable_trailing_stop=self.config.get("stop_loss_tp.enable_trailing_stop", True),
 
                 breakeven_trigger=float(self.config.get("position_management.breakeven_trigger", 1.5)),
+                
+                # Structure-based SL parameters
+                
+                use_structure_based_sl=self.config.get("smart_stop_loss.use_structure_based_sl", True),
+                
+                structure_lookback=int(self.config.get("smart_stop_loss.structure_lookback", 20)),
+                
+                structure_min_atr_distance=float(self.config.get("smart_stop_loss.structure_min_atr_distance", 1.0)),
+                
+                structure_max_atr_distance=float(self.config.get("smart_stop_loss.structure_max_atr_distance", 2.5)),
+                
+                structure_buffer_percent=float(self.config.get("smart_stop_loss.structure_buffer_percent", 0.5)),
 
             )
 
             self.sl_tp_manager = StopLossTakeProfitManager(self.order_manager, sl_tp_config)
 
-            logger.info(f"SL/TP manager initialized: sl_atr={sl_tp_config.sl_atr_multiplier}, tp_atr={sl_tp_config.tp_atr_multiplier}")
+            logger.info(
+                f"SL/TP manager initialized: sl_atr={sl_tp_config.sl_atr_multiplier}, "
+                f"tp_atr={sl_tp_config.tp_atr_multiplier}, "
+                f"structure_based_sl={sl_tp_config.use_structure_based_sl}"
+            )
+            
+            # Scaled Entry Manager
+            
+            if self.config.get("scaled_entry.enabled", False):
+                scaled_entry_config = ScaledEntryConfig(
+                    enabled=True,
+                    volatility_profiles=self.config.get("scaled_entry.volatility_profiles", {}),
+                    level_timeout_minutes=int(self.config.get("scaled_entry.level_timeout_minutes", 30)),
+                    min_level_notional=float(self.config.get("scaled_entry.min_level_notional", 10.0)),
+                )
+                self.scaled_entry_manager = ScaledEntryManager(scaled_entry_config)
+                logger.info("Scaled entry manager initialized")
+            else:
+                self.scaled_entry_manager = None
 
         else:
 
@@ -717,6 +748,10 @@ class TradingBot:
                         values=signal.get("values", {}),
 
                     )
+                    
+                    # Сохраняем последний df для доступа в _process_signal
+                    
+                    self.latest_df = df_with_features
 
                     self._process_signal(signal)
 
@@ -2021,6 +2056,15 @@ class TradingBot:
                 if self.sl_tp_manager and current_atr is not None:
                     # Используем временный order_id для расчета (реальный получим после создания)
                     temp_position_id = f"temp_{int(time.time())}"
+                    
+                    # Извлекаем candles из latest_df для structure-based SL
+                    candles = None
+                    if hasattr(self, 'latest_df') and self.latest_df is not None:
+                        # Конвертируем последние 30 свечей в список dict
+                        lookback = 30
+                        df_candles = self.latest_df[['open', 'high', 'low', 'close', 'timestamp']].tail(lookback)
+                        candles = df_candles.to_dict('records')
+                    
                     sl_tp_levels = self.sl_tp_manager.calculate_levels(
                         position_id=temp_position_id,
                         symbol=self.symbol,
@@ -2028,6 +2072,7 @@ class TradingBot:
                         entry_price=Decimal(str(normalized_price)),
                         entry_qty=Decimal(str(normalized_qty)),
                         current_atr=Decimal(str(current_atr)),
+                        candles=candles,
                     )
                     
                     if sl_tp_levels:

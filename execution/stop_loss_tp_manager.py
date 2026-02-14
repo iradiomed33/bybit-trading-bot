@@ -12,6 +12,8 @@
 
 Уровни рассчитываются на основе ATR (волатильности), не фиксированных процентов.
 
+Поддерживает structure-based SL: размещение стоп-лоссов за уровнями поддержки/сопротивления.
+
 """
 
 
@@ -21,9 +23,11 @@ from dataclasses import dataclass, field
 
 from decimal import Decimal
 
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 from logger import setup_logger
+
+from execution.market_structure import MarketStructureAnalyzer
 
 
 logger = setup_logger(__name__)
@@ -65,6 +69,18 @@ class StopLossTPConfig:
     trailing_multiplier: float = 0.5  # Trailing = 0.5*ATR
 
     breakeven_trigger: float = 1.5  # Move trailing SL only when profit >= 1.5R
+    
+    # Structure-based SL configuration
+    
+    use_structure_based_sl: bool = True  # Использовать SL за swing levels
+    
+    structure_lookback: int = 20  # Сколько свечей для поиска swing points
+    
+    structure_min_atr_distance: float = 1.0  # Минимальное расстояние в ATR
+    
+    structure_max_atr_distance: float = 2.5  # Максимальное расстояние в ATR
+    
+    structure_buffer_percent: float = 0.5  # Буфер от уровня в % (против stop-hunting)
 
 
 @dataclass
@@ -212,6 +228,15 @@ class StopLossTakeProfitManager:
         # Хранилище активных SL/TP
 
         self._levels: Dict[str, StopLossTakeProfitLevels] = {}
+        
+        # Market structure analyzer для smart SL
+        
+        if self.config.use_structure_based_sl:
+            self.structure_analyzer = MarketStructureAnalyzer(
+                lookback=self.config.structure_lookback
+            )
+        else:
+            self.structure_analyzer = None
 
         logger.info(
 
@@ -219,7 +244,9 @@ class StopLossTakeProfitManager:
 
             f"exchange_sl_tp={self.config.use_exchange_sl_tp}, "
 
-            f"virtual={self.config.use_virtual_levels}"
+            f"virtual={self.config.use_virtual_levels}, "
+            
+            f"structure_based_sl={self.config.use_structure_based_sl}"
 
         )
 
@@ -238,11 +265,13 @@ class StopLossTakeProfitManager:
         entry_qty: Decimal,
 
         current_atr: Optional[Decimal] = None,
+        
+        candles: Optional[List[dict]] = None,
 
     ) -> StopLossTakeProfitLevels:
         """
 
-        Рассчитать SL и TP на основе ATR
+        Рассчитать SL и TP на основе ATR или market structure
 
 
         Args:
@@ -250,6 +279,16 @@ class StopLossTakeProfitManager:
             position_id: Уникальный ID позиции (обычно order_id)
 
             symbol: Торговая пара
+
+            side: "Long" или "Short"
+
+            entry_price: Цена входа
+
+            entry_qty: Количество
+
+            current_atr: Текущее значение ATR (может быть None, используем fallback)
+            
+            candles: Исторические свечи для structure-based SL (опционально)
 
             side: "Long" или "Short"
 
@@ -272,67 +311,102 @@ class StopLossTakeProfitManager:
 
         current_atr = Decimal(str(current_atr)) if current_atr else None
 
-        # Рассчитываем расстояния
+        # ===== РАСЧЕТ SL =====
+        
+        sl_price = None
+        sl_reason = "unknown"
+        
+        # Попытка использовать structure-based SL
+        if (
+            self.config.use_structure_based_sl
+            and self.structure_analyzer
+            and candles
+            and current_atr
+            and current_atr > 0
+        ):
+            try:
+                sl_price, sl_reason = self.structure_analyzer.calculate_structure_based_sl(
+                    entry_price=entry_price,
+                    side=side,
+                    candles=candles,
+                    atr=current_atr,
+                    min_atr_distance=self.config.structure_min_atr_distance,
+                    max_atr_distance=self.config.structure_max_atr_distance,
+                    buffer_percent=self.config.structure_buffer_percent,
+                )
+                logger.info(
+                    f"[{position_id}] Structure-based SL: {sl_price} ({sl_reason})"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[{position_id}] Structure-based SL failed: {e}, using ATR fallback"
+                )
+                sl_price = None
+        
+        # Fallback к ATR-based SL если structure-based не сработал
+        if sl_price is None:
+            if current_atr and current_atr > 0:
+                # ATR-based (предпочтительно)
+                sl_distance = current_atr * Decimal(str(self.config.sl_atr_multiplier))
+                
+                # Гарантируем минимальное расстояние
+                min_sl = self.config.min_sl_distance
+                if sl_distance < min_sl:
+                    sl_distance = min_sl
+                
+                if side == "Long":
+                    sl_price = entry_price - sl_distance
+                else:  # Short
+                    sl_price = entry_price + sl_distance
+                
+                sl_reason = f"atr_{self.config.sl_atr_multiplier}x"
+                logger.info(
+                    f"[{position_id}] ATR-based SL: {sl_price} ({sl_distance} distance)"
+                )
+            else:
+                # Fallback к процентам
+                sl_distance = entry_price * Decimal(str(self.config.sl_percent_fallback / 100))
+                
+                if side == "Long":
+                    sl_price = entry_price - sl_distance
+                else:
+                    sl_price = entry_price + sl_distance
+                
+                sl_reason = f"percent_{self.config.sl_percent_fallback}%"
+                logger.warning(
+                    f"[{position_id}] Percent-based SL fallback: {sl_price} "
+                    f"({self.config.sl_percent_fallback}%)"
+                )
+        
+        # ===== РАСЧЕТ TP =====
 
         if current_atr and current_atr > 0:
 
-            # ATR-based (предпочтительно)
-
-            sl_distance = current_atr * Decimal(str(self.config.sl_atr_multiplier))
+            # ATR-based TP
 
             tp_distance = current_atr * Decimal(str(self.config.tp_atr_multiplier))
-
-            logger.info(
-
-                f"[{position_id}] SL/TP calculated with ATR: "
-
-                f"ATR={current_atr}, sl_distance={sl_distance}, tp_distance={tp_distance}"
-
-            )
 
         else:
 
             # Fallback к процентам
 
-            sl_distance = entry_price * Decimal(str(self.config.sl_percent_fallback / 100))
-
             tp_distance = entry_price * Decimal(str(self.config.tp_percent_fallback / 100))
 
-            logger.warning(
-
-                f"[{position_id}] SL/TP calculated with fallback %: "
-
-                f"sl_pct={self.config.sl_percent_fallback}%, "
-
-                f"tp_pct={self.config.tp_percent_fallback}%"
-
-            )
-
-        # Гарантируем минимальные расстояния
-
-        min_sl = self.config.min_sl_distance
+        # Гарантируем минимальное расстояние TP
 
         min_tp = self.config.min_tp_distance
-
-        if sl_distance < min_sl:
-
-            sl_distance = min_sl
 
         if tp_distance < min_tp:
 
             tp_distance = min_tp
 
-        # Рассчитываем уровни в зависимости от направления
+        # Рассчитываем TP в зависимости от направления
 
         if side == "Long":
-
-            sl_price = entry_price - sl_distance
 
             tp_price = entry_price + tp_distance
 
         else:  # Short
-
-            sl_price = entry_price + sl_distance
 
             tp_price = entry_price - tp_distance
 

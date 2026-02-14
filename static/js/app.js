@@ -710,6 +710,16 @@ async function loadSettings() {
         document.getElementById('settingPartialExit2Percent').value = partialLevels[1].percent || 0.25;
     }
     
+    // Load Smart Stop Loss settings (NEW)
+    document.getElementById('settingSmartSLEnabled').checked = configData.smart_stop_loss?.use_structure_based_sl !== false;
+    document.getElementById('settingSmartSLLookback').value = configData.smart_stop_loss?.structure_lookback || 20;
+    document.getElementById('settingSmartSLMinATR').value = configData.smart_stop_loss?.structure_min_atr_distance || 1.0;
+    document.getElementById('settingSmartSLMaxATR').value = configData.smart_stop_loss?.structure_max_atr_distance || 2.5;
+    document.getElementById('settingSmartSLBuffer').value = configData.smart_stop_loss?.structure_buffer_percent || 0.5;
+    
+    // Load Scaled Entry settings (NEW)
+    document.getElementById('settingScaledEntryEnabled').checked = configData.scaled_entry?.enabled === true;
+    
     console.log('[loadSettings] Loaded symbols:', symbols);
     
     // Reset advancedTouched flag after loading
@@ -806,6 +816,16 @@ async function saveSettings() {
         }
     ];
     updates['position_management.partial_exits.levels'] = partialExitsLevels;
+    
+    // Smart Stop Loss settings (NEW)
+    updates['smart_stop_loss.use_structure_based_sl'] = document.getElementById('settingSmartSLEnabled').checked;
+    updates['smart_stop_loss.structure_lookback'] = parseInt(document.getElementById('settingSmartSLLookback').value);
+    updates['smart_stop_loss.structure_min_atr_distance'] = parseFloat(document.getElementById('settingSmartSLMinATR').value);
+    updates['smart_stop_loss.structure_max_atr_distance'] = parseFloat(document.getElementById('settingSmartSLMaxATR').value);
+    updates['smart_stop_loss.structure_buffer_percent'] = parseFloat(document.getElementById('settingSmartSLBuffer').value);
+    
+    // Scaled Entry settings (NEW)
+    updates['scaled_entry.enabled'] = document.getElementById('settingScaledEntryEnabled').checked;
 
     console.log('[saveSettings] Saving with symbols:', symbols);
     console.log('[saveSettings] Volume confirmation:', volumeMode, '| threshold:', volumeThreshold);
@@ -813,6 +833,8 @@ async function saveSettings() {
                 ', trailing=', updates['position_management.trailing_offset_percent'],
                 ', timestop=', updates['position_management.time_stop_minutes']);
     console.log('[saveSettings] Partial exits enabled:', updates['position_management.partial_exits.enabled'], '| levels:', partialExitsLevels);
+    console.log('[saveSettings] Smart SL enabled:', updates['smart_stop_loss.use_structure_based_sl']);
+    console.log('[saveSettings] Scaled Entry enabled:', updates['scaled_entry.enabled']);
     
     let saved = true;
     for (const [key, value] of Object.entries(updates)) {
