@@ -435,13 +435,25 @@ class PositionStateManager:
 
         discrepancies = []
 
+        # Нормализуем стороны (Bybit API: Buy/Sell -> Long/Short)
+        def normalize_side(side: str) -> str:
+            """Normalize Bybit API side to internal format"""
+            side_upper = side.upper()
+            if side_upper == "BUY":
+                return "Long"
+            elif side_upper == "SELL":
+                return "Short"
+            return side  # Fallback to original
+        
+        normalized_exchange_side = normalize_side(exchange_side)
+
         # Проверяем сторону
 
-        if self.position.side.lower() != exchange_side.lower():
+        if self.position.side != normalized_exchange_side:
 
             discrepancies.append(
 
-                f"Side mismatch: local={self.position.side}, exchange={exchange_side}"
+                f"Side mismatch: local={self.position.side}, exchange={normalized_exchange_side} (raw={exchange_side})"
 
             )
 
