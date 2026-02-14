@@ -495,6 +495,22 @@ class MeanReversionStrategy(BaseStrategy):
         if self.require_range_regime:
 
             regime = RegimeSwitcher.detect_regime(df)
+            
+            # Проверка на frozen data (нет движения цены)
+            import math
+            adx = latest.get("adx", 0)
+            is_frozen_data = (
+                regime == "unknown" and 
+                (adx is None or (isinstance(adx, float) and math.isnan(adx)))
+            )
+            
+            if is_frozen_data:
+                # Замороженные данные - пропускаем без WARNING
+                logger.debug(
+                    f"[STR-004] {self.name} skipped: frozen data detected (ADX=nan, regime=unknown) | "
+                    f"Symbol={symbol}"
+                )
+                return None
 
             signal_logger.log_filter_check(
 

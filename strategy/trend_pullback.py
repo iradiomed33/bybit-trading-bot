@@ -175,6 +175,18 @@ class TrendPullbackStrategy(BaseStrategy):
         # 1. Проверка тренда (ADX) - используем каноническое имя "adx"
 
         adx = latest.get("adx", 0)
+        
+        # Проверка на nan/None (замороженные данные, нет движения цены)
+        import math
+        if adx is None or (isinstance(adx, float) and math.isnan(adx)):
+            signal_logger.log_filter_check(
+                filter_name="ADX (Trend Strength)",
+                symbol=symbol,
+                passed=False,
+                value="nan",
+                threshold=self.min_adx,
+            )
+            return None  # Недостаточно данных для расчета ADX
 
         adx_passed = adx >= self.min_adx
 
