@@ -58,11 +58,13 @@ class StopLossTPConfig:
 
     use_virtual_levels: bool = True  # Fallback на виртуальное отслеживание
 
-    # Переквалификация заказов (переместить SL/TP при достижении промежуточных уровней)
+    # Trailing stop configuration
 
     enable_trailing_stop: bool = True
 
     trailing_multiplier: float = 0.5  # Trailing = 0.5*ATR
+
+    breakeven_trigger: float = 1.5  # Move trailing SL only when profit >= 1.5R
 
 
 @dataclass
@@ -87,6 +89,8 @@ class StopLossTakeProfitLevels:
     sl_price: Decimal
 
     tp_price: Decimal
+
+    initial_sl_price: Optional[Decimal] = None  # Initial SL for breakeven calculation
 
     # Статус
 
@@ -349,6 +353,8 @@ class StopLossTakeProfitManager:
             sl_price=sl_price,
 
             tp_price=tp_price,
+
+            initial_sl_price=sl_price,  # Save initial SL for breakeven calculation
 
         )
 
@@ -714,11 +720,32 @@ class StopLossTakeProfitManager:
 
             return False
 
+        # Check if we need initial SL for breakeven trigger calculation
+        if not levels.initial_sl_price:
+            levels.initial_sl_price = levels.sl_price  # Fallback for existing positions
+
         trailing_distance = levels.atr * Decimal(str(self.config.trailing_multiplier))
 
         updated = False
 
         if levels.side == "Long":
+
+            # Calculate profit in R-multiples
+            risk_distance = levels.entry_price - levels.initial_sl_price
+            if risk_distance <= 0:
+                logger.warning(f"[{position_id}] Invalid risk distance for Long: {risk_distance}")
+                return False
+            
+            profit_distance = current_price - levels.entry_price
+            profit_r = profit_distance / risk_distance
+
+            # Only move trailing stop if profit >= breakeven_trigger
+            if profit_r < Decimal(str(self.config.breakeven_trigger)):
+                logger.debug(
+                    f"[{position_id}] Trailing stop NOT updated: profit_r={profit_r:.2f} < "
+                    f"breakeven_trigger={self.config.breakeven_trigger}"
+                )
+                return False
 
             # Для лонга trailing stop движется вверх
 
@@ -726,7 +753,10 @@ class StopLossTakeProfitManager:
 
             if new_sl > levels.sl_price:
 
-                logger.info(f"[{position_id}] Trailing stop updated: {levels.sl_price} → {new_sl}")
+                logger.info(
+                    f"[{position_id}] Trailing stop updated: {levels.sl_price} → {new_sl} "
+                    f"(profit_r={profit_r:.2f}, trigger={self.config.breakeven_trigger})"
+                )
 
                 levels.sl_price = new_sl
 
@@ -734,13 +764,33 @@ class StopLossTakeProfitManager:
 
         else:  # Short
 
+            # Calculate profit in R-multiples for Short
+            risk_distance = levels.initial_sl_price - levels.entry_price
+            if risk_distance <= 0:
+                logger.warning(f"[{position_id}] Invalid risk distance for Short: {risk_distance}")
+                return False
+            
+            profit_distance = levels.entry_price - current_price
+            profit_r = profit_distance / risk_distance
+
+            # Only move trailing stop if profit >= breakeven_trigger
+            if profit_r < Decimal(str(self.config.breakeven_trigger)):
+                logger.debug(
+                    f"[{position_id}] Trailing stop NOT updated: profit_r={profit_r:.2f} < "
+                    f"breakeven_trigger={self.config.breakeven_trigger}"
+                )
+                return False
+
             # Для шорта trailing stop движется вниз
 
             new_sl = current_price + trailing_distance
 
             if new_sl < levels.sl_price:
 
-                logger.info(f"[{position_id}] Trailing stop updated: {levels.sl_price} → {new_sl}")
+                logger.info(
+                    f"[{position_id}] Trailing stop updated: {levels.sl_price} → {new_sl} "
+                    f"(profit_r={profit_r:.2f}, trigger={self.config.breakeven_trigger})"
+                )
 
                 levels.sl_price = new_sl
 

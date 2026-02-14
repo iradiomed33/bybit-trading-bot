@@ -244,6 +244,8 @@ class TradingBot:
 
                 enable_trailing_stop=self.config.get("stop_loss_tp.enable_trailing_stop", True),
 
+                breakeven_trigger=float(self.config.get("position_management.breakeven_trigger", 1.5)),
+
             )
 
             self.sl_tp_manager = StopLossTakeProfitManager(self.order_manager, sl_tp_config)
