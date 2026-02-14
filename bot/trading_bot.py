@@ -2008,6 +2008,33 @@ class TradingBot:
                 # 5. Выставляем ордер с нормализованными значениями
 
                 side = "Buy" if signal["signal"] == "long" else "Sell"
+                side_long = "Long" if signal["signal"] == "long" else "Short"
+
+                # 5a. Рассчитываем SL/TP ПЕРЕД созданием ордера (для включения в ордер)
+                sl_price = None
+                tp_price = None
+                sl_tp_levels = None
+                current_atr = signal.get("atr")
+                
+                if self.sl_tp_manager and current_atr is not None:
+                    # Используем временный order_id для расчета (реальный получим после создания)
+                    temp_position_id = f"temp_{int(time.time())}"
+                    sl_tp_levels = self.sl_tp_manager.calculate_levels(
+                        position_id=temp_position_id,
+                        symbol=self.symbol,
+                        side=side_long,
+                        entry_price=Decimal(str(normalized_price)),
+                        entry_qty=Decimal(str(normalized_qty)),
+                        current_atr=Decimal(str(current_atr)),
+                    )
+                    
+                    if sl_tp_levels:
+                        sl_price = float(sl_tp_levels.sl_price)
+                        tp_price = float(sl_tp_levels.tp_price)
+                        logger.info(
+                            f"Pre-calculated SL/TP for order: SL={sl_price}, TP={tp_price} "
+                            f"(ATR={current_atr})"
+                        )
 
                 # Генерируем стабильный orderLinkId для идемпотентности
                 from execution.order_idempotency import generate_order_link_id
@@ -2036,6 +2063,8 @@ class TradingBot:
                     price=float(normalized_price) if order_type == "Limit" else None,
                     time_in_force=time_in_force,
                     order_link_id=order_link_id,
+                    stop_loss=sl_price,  # ← Выставляем SL вместе с ордером
+                    take_profit=tp_price,  # ← Выставляем TP вместе с ордером
                 )
 
                 # order_result теперь OrderResult, проверяем success вместо retCode
@@ -2046,8 +2075,6 @@ class TradingBot:
                     logger.info(f"[LIVE] Order placed: {order_id}")
 
                     # 6. Регистрируем позицию в PositionStateManager для отслеживания
-
-                    side_long = "Long" if signal["signal"] == "long" else "Short"
 
                     self.position_state_manager.open_position(
 
@@ -2071,67 +2098,16 @@ class TradingBot:
 
                     )
 
-                    # 7. Рассчитываем и выставляем SL/TP уровни на основе ATR
-
-                    sl_tp_levels = None
-
-                    current_atr = signal.get("atr")
-
-                    if self.sl_tp_manager and current_atr is not None:
-
-                        sl_tp_levels = self.sl_tp_manager.calculate_levels(
-
-                            position_id=order_id,
-
-                            symbol=self.symbol,
-
-                            side=side_long,
-
-                            entry_price=Decimal(str(normalized_price)),
-
-                            entry_qty=Decimal(str(normalized_qty)),
-
-                            current_atr=Decimal(str(current_atr)) if current_atr else None,
-
-                        )
-
+                    # 7. SL/TP уже включены в ордер (рассчитаны выше)
+                    # Для limit ордеров они активируются при исполнении
+                    # Для market ордеров - сразу при открытии позиции
+                    
+                    if sl_price and tp_price:
                         logger.info(
-
-                            "[LIVE] SL/TP levels calculated: "
-
-                            f"SL={sl_tp_levels.sl_price}, TP={sl_tp_levels.tp_price} "
-
+                            f"[LIVE] SL/TP included in order: SL={sl_price}, TP={tp_price} "
                             f"(ATR={current_atr})"
-
                         )
-
-                        # Пытаемся выставить SL/TP на бирже (если поддерживается)
-
-                        exchange_success, sl_order_id, tp_order_id = (
-
-                            self.sl_tp_manager.place_exchange_sl_tp(
-
-                                position_id=order_id,
-
-                                category="linear",
-
-                            )
-
-                        )
-
-                        if exchange_success and (sl_order_id or tp_order_id):
-
-                            logger.info(
-
-                                "Exchange SL/TP orders placed: "
-
-                                f"SL={sl_order_id}, TP={tp_order_id}"
-
-                            )
-
-                        else:
-
-                            logger.info(f"Using virtual SL/TP monitoring for {order_id}")
+                        logger.info(f"Virtual SL/TP monitoring enabled for {order_id}")
 
                     # 8. Регистрируем позицию в PositionManager для сопровождения (если используется)
 
