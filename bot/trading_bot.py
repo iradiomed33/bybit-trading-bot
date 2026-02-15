@@ -1970,12 +1970,35 @@ class TradingBot:
 
                 # 3. Нормализуем ордер согласно instrument rules (tickSize, qtyStep, минималы)
 
+
                 # Execution config: Market/Limit (default: Market)
                 desired_order_type = str(self.config.get("execution.order_type", "Market") or "Market").strip().lower()
                 order_type = "Limit" if desired_order_type in ("limit", "lmt") else "Market"
 
                 # If Limit: try to use strategy-provided target price; fallback to entry_price
                 price_for_order = float(signal.get("target_price") or signal.get("entry_price"))
+
+                # --- NEW LOGIC: fetch instrument info and auto-adjust qty ---
+                instrument = self.instruments_manager.get_instrument(self.symbol)
+                if instrument:
+                    min_notional = instrument.get("minNotional", 0)
+                    qty_step = instrument.get("qtyStep", 0.1)
+                    min_order_qty = instrument.get("minOrderQty", 0.1)
+                    # Округляем qty до qtyStep
+                    qty = float((Decimal(str(qty)) / Decimal(str(qty_step))).quantize(Decimal("1"), rounding=ROUND_DOWN) * Decimal(str(qty_step)))
+                    # Проверяем minNotional
+                    notional = qty * price_for_order
+                    if notional < float(min_notional):
+                        # Авто-увеличиваем qty до minNotional
+                        qty_min = float((Decimal(str(min_notional)) / Decimal(str(price_for_order))).quantize(Decimal("1"), rounding=ROUND_UP))
+                        # Округляем до qtyStep
+                        qty_min = float((Decimal(str(qty_min)) / Decimal(str(qty_step))).quantize(Decimal("1"), rounding=ROUND_UP) * Decimal(str(qty_step)))
+                        logger.warning(f"[QTY] Notional {notional:.4f} < minNotional {min_notional} for {self.symbol}. Auto-adjusting qty: {qty} → {qty_min}")
+                        qty = qty_min
+                    # Проверяем minOrderQty
+                    if qty < float(min_order_qty):
+                        logger.warning(f"[QTY] Qty {qty:.4f} < minOrderQty {min_order_qty} for {self.symbol}. Auto-adjusting qty: {qty} → {min_order_qty}")
+                        qty = float(min_order_qty)
 
                 logger.debug(f"Normalizing order: type={order_type}, price={price_for_order}, qty={qty}")
 
@@ -1986,30 +2009,18 @@ class TradingBot:
                     qty,
                 )
 
-
-
                 if not is_valid:
-
                     logger.warning(f"Order normalization failed: {norm_message}")
-
                     return
 
                 # Логируем нормализованные значения для отладки
-
                 if float(normalized_price) != float(price_for_order) or float(normalized_qty) != qty:
-
                     logger.info(
-
                         "Order normalized: "
-
                         f"price {price_for_order} → {normalized_price}, "
-
                         f"qty {qty} → {normalized_qty}"
-
                     )
-
                 else:
-
                     logger.debug("Order already normalized correctly")
 
                 # 4. Проверяем риск-лимиты
