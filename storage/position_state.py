@@ -348,12 +348,23 @@ class PositionStateManager:
             if exchange_position is None:
 
                 if self.position is not None:
-
+                    # GRACE PERIOD: позиция может отсутствовать если limit ордер еще не исполнился
+                    # Даем 10 секунд на исполнение перед тем как считать позицию закрытой
+                    time_since_open_ms = int(time.time() * 1000) - self.position.opened_at
+                    grace_period_ms = 10000  # 10 секунд
+                    
+                    if time_since_open_ms < grace_period_ms:
+                        logger.debug(
+                            f"Position not yet filled on exchange (opened {time_since_open_ms}ms ago). "
+                            f"Waiting for order execution... Grace period: {grace_period_ms}ms"
+                        )
+                        return True
+                    
                     logger.warning(
 
                         f"Position closed manually on exchange: {self.position.side} {self.position.qty} "
 
-                        f"{self.symbol} (was opened {int(time.time() * 1000) - self.position.opened_at}ms ago)"
+                        f"{self.symbol} (was opened {time_since_open_ms}ms ago)"
 
                     )
 
