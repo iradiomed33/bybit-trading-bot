@@ -1995,10 +1995,14 @@ class TradingBot:
                         qty_min = float((Decimal(str(qty_min)) / Decimal(str(qty_step))).quantize(Decimal("1"), rounding=ROUND_UP) * Decimal(str(qty_step)))
                         logger.warning(f"[QTY] Notional {notional:.4f} < minNotional {min_notional} for {self.symbol}. Auto-adjusting qty: {qty} → {qty_min}")
                         qty = qty_min
-                    # Проверяем minOrderQty
+                    # Явно проверяем minOrderQty после всех авто-правок
                     if qty < float(min_order_qty):
-                        logger.warning(f"[QTY] Qty {qty:.4f} < minOrderQty {min_order_qty} for {self.symbol}. Auto-adjusting qty: {qty} → {min_order_qty}")
+                        logger.warning(f"[QTY] Qty {qty:.8f} < minOrderQty {min_order_qty} for {self.symbol}. Forcing qty = minOrderQty.")
                         qty = float(min_order_qty)
+                    # Если после всех авто-правок qty <= 0, логируем ошибку и пропускаем trade
+                    if qty <= 0:
+                        logger.error(f"[QTY] Qty is zero or negative after normalization for {self.symbol}. Skipping trade. Check risk settings and equity.")
+                        return
 
                 logger.debug(f"Normalizing order: type={order_type}, price={price_for_order}, qty={qty}")
 
