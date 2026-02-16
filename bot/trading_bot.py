@@ -24,7 +24,7 @@ import time
 
 from typing import Dict, Any, Optional
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 
 import numpy as np
 
@@ -1962,13 +1962,8 @@ class TradingBot:
 
                     )
 
-                if qty <= 0:
-
-                    logger.warning("Position size too small, skipping trade")
-
-                    return
-
                 # 3. Нормализуем ордер согласно instrument rules (tickSize, qtyStep, минималы)
+                # NOTE: Не проверяем qty <= 0 здесь, т.к. авто-увеличение до minOrderQty может исправить это
 
 
                 # Execution config: Market/Limit (default: Market)
@@ -1981,28 +1976,29 @@ class TradingBot:
                 # --- NEW LOGIC: fetch instrument info and auto-adjust qty ---
                 instrument = self.instruments_manager.get_instrument(self.symbol)
                 if instrument:
-                    min_notional = instrument.get("minNotional", 0)
-                    qty_step = instrument.get("qtyStep", 0.1)
-                    min_order_qty = instrument.get("minOrderQty", 0.1)
-                    # Округляем qty до qtyStep
-                    qty = float((Decimal(str(qty)) / Decimal(str(qty_step))).quantize(Decimal("1"), rounding=ROUND_DOWN) * Decimal(str(qty_step)))
-                    # Проверяем minNotional
+                    min_notional = float(instrument.get("minNotional", 5.0))
+                    qty_step = float(instrument.get("qtyStep", 0.001))
+                    min_order_qty = float(instrument.get("minOrderQty", 0.001))
+                    
+                    # Если qty = 0 или очень мал, сразу устанавливаем minOrderQty
+                    if qty <= 0 or qty < min_order_qty:
+                        logger.warning(f"[QTY] Initial qty={qty:.6f} too small for {self.symbol}. Setting to minOrderQty={min_order_qty}")
+                        qty = min_order_qty
+                    else:
+                        # Округляем qty до qtyStep (вниз, чтобы не превысить риск)
+                        qty = float((Decimal(str(qty)) / Decimal(str(qty_step))).quantize(Decimal("1"), rounding=ROUND_DOWN) * Decimal(str(qty_step)))
+                    
+                    # Проверяем minNotional и при необходимости увеличиваем qty
                     notional = qty * price_for_order
-                    if notional < float(min_notional):
+                    if notional < min_notional:
                         # Авто-увеличиваем qty до minNotional
-                        qty_min = float((Decimal(str(min_notional)) / Decimal(str(price_for_order))).quantize(Decimal("1"), rounding=ROUND_UP))
-                        # Округляем до qtyStep
+                        qty_min = (min_notional / price_for_order) * 1.01  # +1% запас
+                        # Округляем вверх до qtyStep
                         qty_min = float((Decimal(str(qty_min)) / Decimal(str(qty_step))).quantize(Decimal("1"), rounding=ROUND_UP) * Decimal(str(qty_step)))
-                        logger.warning(f"[QTY] Notional {notional:.4f} < minNotional {min_notional} for {self.symbol}. Auto-adjusting qty: {qty} → {qty_min}")
+                        logger.warning(f"[QTY] Notional {notional:.4f} < minNotional {min_notional} for {self.symbol}. Auto-adjusting qty: {qty:.6f} → {qty_min:.6f}")
                         qty = qty_min
-                    # Явно проверяем minOrderQty после всех авто-правок
-                    if qty < float(min_order_qty):
-                        logger.warning(f"[QTY] Qty {qty:.8f} < minOrderQty {min_order_qty} for {self.symbol}. Forcing qty = minOrderQty.")
-                        qty = float(min_order_qty)
-                    # Если после всех авто-правок qty <= 0, логируем ошибку и пропускаем trade
-                    if qty <= 0:
-                        logger.error(f"[QTY] Qty is zero or negative after normalization for {self.symbol}. Skipping trade. Check risk settings and equity.")
-                        return
+                else:
+                    logger.warning(f"[QTY] No instrument info for {self.symbol}, cannot auto-adjust qty")
 
                 logger.debug(f"Normalizing order: type={order_type}, price={price_for_order}, qty={qty}")
 
@@ -2026,6 +2022,15 @@ class TradingBot:
                     )
                 else:
                     logger.debug("Order already normalized correctly")
+
+                # Окончательная проверка: если qty всё равно <= 0, прерываем
+                if float(normalized_qty) <= 0:
+                    logger.error(
+                        f"[QTY] Position size is 0 after normalization for {self.symbol}. "
+                        f"Risk too small (risk_usd likely < ${float(normalized_price) * 0.001:.2f}) or balance too low. "
+                        f"Consider increasing position_risk_percent or account balance."
+                    )
+                    return
 
                 # 4. Проверяем риск-лимиты
 
