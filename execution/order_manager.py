@@ -48,6 +48,10 @@ class OrderManager:
         """
 
         self.client = client
+        
+        # Отслеживание pending ордеров для limit orders
+        # {order_id: {"symbol": ..., "side": ..., "qty": ..., "created_at": ..., "callback": ...}}
+        self.pending_orders: Dict[str, Dict[str, Any]] = {}
 
         self.db = db
 
@@ -597,3 +601,127 @@ class OrderManager:
         except Exception as e:
             logger.error(f"Cancel trading stop exception: {e}", exc_info=True)
             return OrderResult.error_result(str(e))
+
+    def get_order_status(self, order_id: str, symbol: str, category: str = "linear") -> Optional[Dict[str, Any]]:
+        """
+        Получить актуальный статус ордера с биржи.
+        
+        Args:
+            order_id: ID ордера
+            symbol: Символ
+            category: Категория
+            
+        Returns:
+            Dict с информацией об ордере или None если ошибка
+            
+        Docs: https://bybit-exchange.github.io/docs/v5/order/order-list
+        """
+        try:
+            response = self.client.get(
+                "/v5/order/realtime",
+                params={
+                    "category": category,
+                    "orderId": order_id,
+                },
+                signed=True,
+            )
+            
+            if response.get("retCode") != 0:
+                logger.warning(f"Failed to get order status for {order_id}: {response.get('retMsg')}")
+                return None
+            
+            orders_list = response.get("result", {}).get("list", [])
+            if not orders_list:
+                logger.debug(f"Order {order_id} not found in realtime orders")
+                return None
+            
+            order_info = orders_list[0]
+            return order_info
+            
+        except Exception as e:
+            logger.error(f"Error getting order status for {order_id}: {e}")
+            return None
+    
+    def monitor_pending_orders(self, position_callback=None) -> Dict[str, Any]:
+        """
+        Проверить статус всех pending ордеров и обработать заполненные.
+        
+        Args:
+            position_callback: Функция(order_info) для регистрации позиции при fill
+            
+        Returns:
+            Dict со статистикой: {"filled": [], "cancelled": [], "expired": []}
+            
+        Статусы ордеров:
+        - New: Ордер создан и находится в стакане
+        - Filled: Полностью исполнен
+        - PartiallyFilled: Частично исполнен
+        - Cancelled: Отменен
+        - Rejected: Отклонен биржей
+        """
+        filled_orders = []
+        cancelled_orders = []
+        expired_orders = []
+        
+        # Копируем ключи чтобы избежать изменения dict во время итерации
+        order_ids = list(self.pending_orders.keys())
+        
+        for order_id in order_ids:
+            pending_info = self.pending_orders[order_id]
+            symbol = pending_info["symbol"]
+            
+            # Получаем актуальный статус с биржи
+            order_info = self.get_order_status(order_id, symbol)
+            
+            if not order_info:
+                # Ордер не найден — возможно уже исполнен и удален из realtime
+                # Проверяем через history если прошло достаточно времени
+                time_elapsed = time.time() - pending_info["created_at"]
+                if time_elapsed > 60:  # 1 минута
+                    logger.warning(f"Pending order {order_id} not found after {time_elapsed:.0f}s, removing from pending")
+                    del self.pending_orders[order_id]
+                    expired_orders.append(order_id)
+                continue
+            
+            order_status = order_info.get("orderStatus")
+            cum_exec_qty = float(order_info.get("cumExecQty", 0))
+            
+            # Проверяем TTL (time to live)
+            # IOC/FOK ордера могут не иметь TTL (биржа сама их отменяет)
+            ttl = pending_info.get("ttl_seconds")
+            time_elapsed = time.time() - pending_info["created_at"]
+            time_in_force = pending_info.get("time_in_force", "GTC")
+            
+            if order_status == "Filled":
+                logger.info(f"✓ Order {order_id} FILLED: {cum_exec_qty} {symbol}")
+                
+                # Вызываем callback для регистрации позиции
+                if position_callback:
+                    position_callback(order_info, pending_info)
+                
+                # Удаляем из pending
+                del self.pending_orders[order_id]
+                filled_orders.append(order_id)
+                
+            elif order_status in ["Cancelled", "Rejected"]:
+                logger.warning(f"Order {order_id} {order_status}")
+                del self.pending_orders[order_id]
+                cancelled_orders.append(order_id)
+                
+            elif order_status == "PartiallyFilled":
+                logger.info(f"Order {order_id} partially filled: {cum_exec_qty}/{pending_info['qty']}")
+                # Продолжаем отслеживать
+                
+            elif order_status == "New" and ttl and time_elapsed > ttl:
+                # Ордер не исполнился за TTL — отменяем
+                logger.warning(f"Order {order_id} expired (TTL={ttl}s), cancelling...")
+                cancel_result = self.cancel_order("linear", symbol, order_id=order_id)
+                if cancel_result.success:
+                    del self.pending_orders[order_id]
+                    expired_orders.append(order_id)
+        
+        return {
+            "filled": filled_orders,
+            "cancelled": cancelled_orders,
+            "expired": expired_orders,
+        }

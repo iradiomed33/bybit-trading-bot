@@ -903,7 +903,73 @@ class TradingBot:
 
                     self.equity_curve.add_point(time.time(), equity)
 
-                # 7. Синхронизируем состояние позиции с биржей (если в live mode)
+                # 8. Мониторим pending ордера (limit orders) и регистрируем позиции при fill
+                if self.mode == "live" and self.order_manager:
+                    def register_filled_position(order_info, pending_info):
+                        """Callback для регистрации позиции когда limit ордер исполнился"""
+                        try:
+                            # Получаем фактическую цену исполнения
+                            avg_price = float(order_info.get("avgPrice", pending_info["price"]))
+                            filled_qty = float(order_info.get("cumExecQty", pending_info["qty"]))
+                            
+                            # Регистрируем позицию в position_state_manager
+                            self.position_state_manager.open_position(
+                                side=pending_info["side"],
+                                qty=Decimal(str(filled_qty)),
+                                entry_price=Decimal(str(avg_price)),
+                                order_id=order_info.get("orderId"),
+                                strategy_id=pending_info["strategy"],
+                            )
+                            
+                            logger.info(
+                                f"[LIMIT FILLED] Position registered: {pending_info['side']} "
+                                f"{filled_qty} @ {avg_price}, orderId={order_info.get('orderId')}"
+                            )
+                            
+                            # Регистрируем в position_manager для сопровождения
+                            if self.position_manager:
+                                partial_exit_levels = None
+                                if self.config.get("position_management.partial_exits.enabled", True):
+                                    levels_config = self.config.get("position_management.partial_exits.levels", [])
+                                    if levels_config:
+                                        partial_exit_levels = [
+                                            (float(level["r_level"]), float(level["percent"]))
+                                            for level in levels_config
+                                        ]
+                                
+                                self.position_manager.register_position(
+                                    symbol=pending_info["symbol"],
+                                    side="Buy" if pending_info["side"] == "Long" else "Sell",
+                                    entry_price=avg_price,
+                                    size=filled_qty,
+                                    stop_loss=pending_info.get("sl_price"),
+                                    take_profit=pending_info.get("tp_price"),
+                                    breakeven_trigger=float(self.config.get("position_management.breakeven_trigger", 1.5)),
+                                    trailing_offset_percent=float(self.config.get("position_management.trailing_offset_percent", 1.0)),
+                                    time_stop_minutes=int(self.config.get("position_management.time_stop_minutes", 60)),
+                                    partial_exit_levels=partial_exit_levels,
+                                )
+                                logger.info(
+                                    f"Position registered: Buy {filled_qty} {pending_info['symbol']} @ {avg_price}, "
+                                    f"SL={pending_info.get('sl_price')}, partial_exits={len(partial_exit_levels or [])} levels"
+                                )
+                        except Exception as e:
+                            logger.error(f"Error registering filled position: {e}", exc_info=True)
+                    
+                    # Проверяем статус pending ордеров
+                    monitoring_result = self.order_manager.monitor_pending_orders(
+                        position_callback=register_filled_position
+                    )
+                    
+                    # Логируем результаты мониторинга
+                    if monitoring_result["filled"]:
+                        logger.info(f"Filled orders: {len(monitoring_result['filled'])}")
+                    if monitoring_result["cancelled"]:
+                        logger.warning(f"Cancelled orders: {len(monitoring_result['cancelled'])}")
+                    if monitoring_result["expired"]:
+                        logger.warning(f"Expired orders (TTL): {len(monitoring_result['expired'])}")
+
+                # 9. Синхронизируем состояние позиции с биржей (если в live mode)
 
                 if self.mode == "live" and self.position_state_manager:
 
@@ -2142,29 +2208,67 @@ class TradingBot:
 
                     logger.info(f"[LIVE] Order placed: {order_id}")
 
-                    # 6. Регистрируем позицию в PositionStateManager для отслеживания
+                    # 6. Регистрация позиции зависит от типа ордера:
+                    # - Market: позиция регистрируется сразу (instant fill)
+                    # - Limit: ордер добавляется в pending, позиция регистрируется при fill
+                    
+                    if order_type == "Market":
+                        # Market ордер исполняется мгновенно — регистрируем позицию сразу
+                        self.position_state_manager.open_position(
 
-                    self.position_state_manager.open_position(
+                            side=side_long,
 
-                        side=side_long,
+                            qty=Decimal(str(normalized_qty)),
 
-                        qty=Decimal(str(normalized_qty)),
+                            entry_price=Decimal(str(normalized_price)),
 
-                        entry_price=Decimal(str(normalized_price)),
+                            order_id=order_id,
 
-                        order_id=order_id,
+                            strategy_id=signal.get("strategy", "Unknown"),
 
-                        strategy_id=signal.get("strategy", "Unknown"),
+                        )
 
-                    )
+                        logger.info(
 
-                    logger.info(
+                            "Position registered in state manager: "
 
-                        "Position registered in state manager: "
+                            f"{side_long} {normalized_qty} @ {normalized_price}, orderId={order_id}"
 
-                        f"{side_long} {normalized_qty} @ {normalized_price}, orderId={order_id}"
-
-                    )
+                        )
+                    else:
+                        # Limit ордер — добавляем в pending для мониторинга
+                        # Для IOC/FOK TTL не применяется (биржа сама отменит если не исполнится)
+                        ttl = int(self.config.get("execution.ttl_seconds", 300))
+                        
+                        # IOC/FOK ордера не нуждаются в TTL - биржа их обработает мгновенно
+                        apply_ttl = time_in_force not in ["IOC", "FOK"]
+                        
+                        self.order_manager.pending_orders[order_id] = {
+                            "symbol": self.symbol,
+                            "side": side_long,
+                            "qty": float(normalized_qty),
+                            "price": float(normalized_price),
+                            "created_at": time.time(),
+                            "ttl_seconds": ttl if apply_ttl else None,
+                            "time_in_force": time_in_force,
+                            "strategy": signal.get("strategy", "Unknown"),
+                            "sl_price": sl_price,
+                            "tp_price": tp_price,
+                            "current_atr": current_atr,
+                        }
+                        
+                        if apply_ttl:
+                            logger.info(
+                                f"[LIMIT ORDER] Added to pending: {order_id} "
+                                f"({side_long} {normalized_qty} @ {normalized_price}), "
+                                f"TIF={time_in_force}, TTL={ttl}s. Position will be registered when filled."
+                            )
+                        else:
+                            logger.info(
+                                f"[LIMIT ORDER] Added to pending: {order_id} "
+                                f"({side_long} {normalized_qty} @ {normalized_price}), "
+                                f"TIF={time_in_force} (no TTL - exchange will handle). Position will be registered when filled."
+                            )
 
                     # 7. SL/TP уже включены в ордер (рассчитаны выше)
                     # Для limit ордеров они активируются при исполнении
@@ -2178,8 +2282,9 @@ class TradingBot:
                         logger.info(f"Virtual SL/TP monitoring enabled for {order_id}")
 
                     # 8. Регистрируем позицию в PositionManager для сопровождения (если используется)
+                    # Только для market ордеров (для limit — после fill)
 
-                    if self.position_manager:
+                    if self.position_manager and order_type == "Market":
                         # Получаем partial exits конфиг из config.yaml
                         partial_exit_levels = None
                         if self.config.get("position_management.partial_exits.enabled", True):

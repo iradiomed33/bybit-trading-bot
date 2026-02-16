@@ -666,6 +666,7 @@ async function loadSettings() {
     document.getElementById('settingOrderType').value = configData.execution?.order_type || 'limit';
     document.getElementById('settingTimeInForce').value = configData.execution?.time_in_force || 'GTC';
     document.getElementById('settingPostOnly').checked = configData.execution?.post_only || false;
+    document.getElementById('settingTtlSeconds').value = configData.execution?.ttl_seconds || 300;
     
     // Load kill-switch settings
     document.getElementById('settingDailyLossLimit').value = configData.risk_management?.daily_loss_limit_percent || 5.0;
@@ -755,6 +756,7 @@ async function saveSettings() {
         'execution.order_type': document.getElementById('settingOrderType').value,
         'execution.time_in_force': document.getElementById('settingTimeInForce').value,
         'execution.post_only': document.getElementById('settingPostOnly').checked,
+        'execution.ttl_seconds': parseInt(document.getElementById('settingTtlSeconds').value),
         
         // Risk management settings
         'risk_management.position_risk_percent': parseFloat(document.getElementById('settingPositionRisk').value),

@@ -308,7 +308,7 @@
                                     <div class="mb-3">
                                         <label class="form-label">
                                             Time in Force
-                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="GTC = ордер активен пока не исполнен или отменен. IOC = исполнить немедленно или отменить. FOK = исполнить полностью или отменить"></i>
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="GTC = ордер активен пока не исполнен или отменен (используется TTL). IOC = исполнить немедленно или отменить (TTL не применяется). FOK = исполнить полностью или отменить (TTL не применяется)"></i>
                                         </label>
                                         <select class="form-select" id="settingTimeInForce">
                                             <option value="GTC" selected>GTC (Good Till Cancel)</option>
@@ -320,8 +320,16 @@
                                         <input type="checkbox" class="form-check-input" id="settingPostOnly">
                                         <label class="form-check-label" for="settingPostOnly">
                                             Post-only (только мейкер)
-                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Ордер будет добавлен в стакан как maker (получаешь rebate). Если исполнится как taker, будет отменен"></i>
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Ордер будет добавлен в стакан как maker (получаешь rebate). Если исполнится как taker, будет отменен. Работает как GTC с TTL"></i>
                                         </label>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">
+                                            TTL для Limit ордеров (секунды)
+                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Time To Live - автоматическая отмена неисполненных лимитных ордеров. Применяется только к GTC и PostOnly. IOC/FOK обрабатываются биржей мгновенно"></i>
+                                        </label>
+                                        <input type="number" class="form-control" id="settingTtlSeconds" min="30" max="86400" step="30" value="300">
+                                        <small class="form-text text-muted">300 сек = 5 минут, 3600 сек = 1 час</small>
                                     </div>
                                 </div>
                             </div>
