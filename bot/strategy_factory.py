@@ -42,7 +42,8 @@ class StrategyFactory:
             from strategy.trend_pullback import TrendPullbackStrategy
             from strategy.breakout import BreakoutStrategy
             from strategy.mean_reversion import MeanReversionStrategy
-            strategy_classes = [TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy]
+            from strategy.grid_trading import GridTradingStrategy
+            strategy_classes = [TrendPullbackStrategy, BreakoutStrategy, MeanReversionStrategy, GridTradingStrategy]
         
         strategies = []
         for strategy_class in strategy_classes:

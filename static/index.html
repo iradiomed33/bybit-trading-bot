@@ -463,6 +463,66 @@
                                                     <input type="number" class="form-control advanced-input" id="settingVolumeZThreshold" data-testid="settings-advanced-volume-z" min="-2" max="3" step="0.1" value="0.2">
                                                     <small class="form-text text-muted">Z-score: стандартные отклонения от среднего объёма</small>
                                                 </div>
+                                                
+                                                <h6 class="mb-3 mt-4">Grid Trading Strategy</h6>
+                                                <div class="mb-3">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input advanced-input" type="checkbox" id="settingGridTradingEnabled" data-testid="settings-grid-enabled">
+                                                        <label class="form-check-label" for="settingGridTradingEnabled">
+                                                            Включить Grid Trading
+                                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Сеточная торговля для бокового рынка. Размещает уровни buy/sell в диапазоне консолидации"></i>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">
+                                                        Режим определения диапазона
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Auto = автоматически определяет диапазон | Manual = ручные границы"></i>
+                                                    </label>
+                                                    <select class="form-select advanced-input" id="settingGridRangeMode" data-testid="settings-grid-range-mode">
+                                                        <option value="auto" selected>Auto (автоматически)</option>
+                                                        <option value="manual">Manual (ручные границы)</option>
+                                                    </select>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">
+                                                        Количество уровней сетки
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Число уровней buy/sell в диапазоне (рекомендуется 15-25)"></i>
+                                                    </label>
+                                                    <input type="number" class="form-control advanced-input" id="settingGridLevels" data-testid="settings-grid-levels" min="5" max="50" step="1" value="20">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">
+                                                        Шаг сетки (%)
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Расстояние между уровнями сетки в процентах (рекомендуется 1-2%)"></i>
+                                                    </label>
+                                                    <input type="number" class="form-control advanced-input" id="settingGridSpacing" data-testid="settings-grid-spacing" min="0.5" max="5" step="0.1" value="1.5">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input advanced-input" type="checkbox" id="settingGridRequireRange" data-testid="settings-grid-require-range" checked>
+                                                        <label class="form-check-label" for="settingGridRequireRange">
+                                                            Требовать боковой рынок
+                                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Проверять ADX и BB width для подтверждения range"></i>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <div class="form-check form-switch">
+                                                        <input class="form-check-input advanced-input" type="checkbox" id="settingGridBreakoutProtection" data-testid="settings-grid-breakout-protection" checked>
+                                                        <label class="form-check-label" for="settingGridBreakoutProtection">
+                                                            Защита от пробоя
+                                                            <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Останавливает торговлю при высоком объёме или резком движении цены"></i>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">
+                                                        Макс. открытых Grid позиций
+                                                        <i class="bi bi-question-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top" title="Максимум одновременных позиций по Grid стратегии"></i>
+                                                    </label>
+                                                    <input type="number" class="form-control advanced-input" id="settingGridMaxPositions" data-testid="settings-grid-max-positions" min="1" max="10" step="1" value="5">
+                                                </div>
                                             </div>
                                         </div>
                                         

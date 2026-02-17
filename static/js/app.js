@@ -685,6 +685,15 @@ async function loadSettings() {
     document.getElementById('settingVolumeConfirmationMode').value = configData.strategies?.TrendPullback?.volume_confirmation_mode || 'auto';
     document.getElementById('settingVolumeZThreshold').value = configData.strategies?.TrendPullback?.volume_z_threshold || 0.2;
     
+    // Load Grid Trading settings
+    document.getElementById('settingGridTradingEnabled').checked = configData.strategies?.GridTrading?.enabled !== false;
+    document.getElementById('settingGridRangeMode').value = configData.strategies?.GridTrading?.range_mode || 'auto';
+    document.getElementById('settingGridLevels').value = configData.strategies?.GridTrading?.grid_levels || 20;
+    document.getElementById('settingGridSpacing').value = configData.strategies?.GridTrading?.grid_spacing_percent || 1.5;
+    document.getElementById('settingGridRequireRange').checked = configData.strategies?.GridTrading?.require_ranging_market !== false;
+    document.getElementById('settingGridBreakoutProtection').checked = configData.strategies?.GridTrading?.enable_breakout_protection !== false;
+    document.getElementById('settingGridMaxPositions').value = configData.strategies?.GridTrading?.max_grid_positions || 5;
+    
     // Show/hide custom threshold based on mode
     toggleVolumeCustomThreshold();
     
@@ -797,6 +806,15 @@ async function saveSettings() {
     
     updates['strategies.TrendPullback.volume_confirmation_mode'] = volumeMode;
     updates['strategies.TrendPullback.volume_z_threshold'] = volumeThreshold;
+    
+    // Grid Trading settings
+    updates['strategies.GridTrading.enabled'] = document.getElementById('settingGridTradingEnabled').checked;
+    updates['strategies.GridTrading.range_mode'] = document.getElementById('settingGridRangeMode').value;
+    updates['strategies.GridTrading.grid_levels'] = parseInt(document.getElementById('settingGridLevels').value);
+    updates['strategies.GridTrading.grid_spacing_percent'] = parseFloat(document.getElementById('settingGridSpacing').value);
+    updates['strategies.GridTrading.require_ranging_market'] = document.getElementById('settingGridRequireRange').checked;
+    updates['strategies.GridTrading.enable_breakout_protection'] = document.getElementById('settingGridBreakoutProtection').checked;
+    updates['strategies.GridTrading.max_grid_positions'] = parseInt(document.getElementById('settingGridMaxPositions').value);
 
     // Position management settings
     updates['position_management.breakeven_trigger'] = parseFloat(document.getElementById('settingBreakevenTrigger').value);

@@ -75,6 +75,16 @@ class StrategyBuilder:
                 logger.error(f"Failed to build MeanReversion: {e}")
                 raise
         
+        # Grid Trading Strategy
+        if "GridTrading" in active_strategies:
+            try:
+                strat = self._build_grid_trading()
+                strategies.append(strat)
+                logger.info(f"✓ GridTrading added")
+            except Exception as e:
+                logger.error(f"Failed to build GridTrading: {e}")
+                raise
+        
         logger.info("="*70)
         logger.info(f"Built {len(strategies)} strategies")
         logger.info("="*70)
@@ -262,6 +272,78 @@ class StrategyBuilder:
         
         return strategy
     
+    def _build_grid_trading(self):
+        """Создаёт GridTradingStrategy с параметрами из конфига"""
+        
+        from strategy.grid_trading import GridTradingStrategy
+        
+        config_key = "strategies.GridTrading"
+        
+        # Range params
+        range_mode = self.config.get(f"{config_key}.range_mode", "auto")
+        manual_lower = self.config.get(f"{config_key}.manual_lower", None)
+        manual_upper = self.config.get(f"{config_key}.manual_upper", None)
+        range_lookback = self.config.get(f"{config_key}.range_lookback", 100)
+        
+        # Grid params
+        grid_levels = self.config.get(f"{config_key}.grid_levels", 20)
+        grid_spacing_percent = self.config.get(f"{config_key}.grid_spacing_percent", 1.5)
+        
+        # Market condition filters
+        require_ranging_market = self.config.get(f"{config_key}.require_ranging_market", True)
+        max_adx_for_range = self.config.get(f"{config_key}.max_adx_for_range", 25.0)
+        min_bb_width = self.config.get(f"{config_key}.min_bb_width", 0.015)
+        max_bb_width = self.config.get(f"{config_key}.max_bb_width", 0.05)
+        
+        # Protection
+        enable_breakout_protection = self.config.get(f"{config_key}.enable_breakout_protection", True)
+        breakout_volume_threshold = self.config.get(f"{config_key}.breakout_volume_threshold", 2.0)
+        stop_loss_atr_multiplier = self.config.get(f"{config_key}.stop_loss_atr_multiplier", 3.0)
+        
+        # Position management
+        profit_per_grid = self.config.get(f"{config_key}.profit_per_grid", 1.5)
+        max_grid_positions = self.config.get(f"{config_key}.max_grid_positions", 5)
+        rebalance_on_drift = self.config.get(f"{config_key}.rebalance_on_drift", True)
+        drift_threshold_percent = self.config.get(f"{config_key}.drift_threshold_percent", 10.0)
+        
+        # Meta params
+        confidence_threshold = self.config.get(f"{config_key}.confidence_threshold", 0.70)
+        
+        logger.info(f"\n  [GridTrading Config]")
+        logger.info(f"    range_mode: {range_mode}")
+        logger.info(f"    range_lookback: {range_lookback}")
+        logger.info(f"    grid_levels: {grid_levels}")
+        logger.info(f"    grid_spacing_percent: {grid_spacing_percent}%")
+        logger.info(f"    require_ranging_market: {require_ranging_market}")
+        logger.info(f"    max_adx_for_range: {max_adx_for_range}")
+        logger.info(f"    enable_breakout_protection: {enable_breakout_protection}")
+        logger.info(f"    confidence_threshold: {confidence_threshold}")
+        
+        strategy = GridTradingStrategy(
+            range_mode=str(range_mode),
+            manual_lower=float(manual_lower) if manual_lower is not None else None,
+            manual_upper=float(manual_upper) if manual_upper is not None else None,
+            range_lookback=int(range_lookback),
+            grid_levels=int(grid_levels),
+            grid_spacing_percent=float(grid_spacing_percent),
+            require_ranging_market=bool(require_ranging_market),
+            max_adx_for_range=float(max_adx_for_range),
+            min_bb_width=float(min_bb_width),
+            max_bb_width=float(max_bb_width),
+            enable_breakout_protection=bool(enable_breakout_protection),
+            breakout_volume_threshold=float(breakout_volume_threshold),
+            stop_loss_atr_multiplier=float(stop_loss_atr_multiplier),
+            profit_per_grid=float(profit_per_grid),
+            max_grid_positions=int(max_grid_positions),
+            rebalance_on_drift=bool(rebalance_on_drift),
+            drift_threshold_percent=float(drift_threshold_percent),
+        )
+        
+        # Store config for later access
+        strategy.confidence_threshold = float(confidence_threshold)
+        
+        return strategy
+    
     def get_strategy_params_summary(self) -> Dict[str, Any]:
         """Получить сводку по параметрам стратегий"""
         
@@ -270,7 +352,7 @@ class StrategyBuilder:
         }
         
         # Collect all strategy params
-        for strategy_name in ["TrendPullback", "Breakout", "MeanReversion"]:
+        for strategy_name in ["TrendPullback", "Breakout", "MeanReversion", "GridTrading"]:
             config_prefix = f"strategies.{strategy_name}"
             summary[strategy_name] = {}
             
