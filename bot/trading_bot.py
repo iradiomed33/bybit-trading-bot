@@ -658,6 +658,7 @@ class TradingBot:
 
                     df_limited, 
                     orderbook=data.get("orderbook"),
+                    ticker_data=data.get("ticker_data"),  # ← Передан для точного sanity check
                     orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct,
                     kline_interval_minutes=kline_interval_minutes,
                     is_testnet=is_testnet
@@ -1200,6 +1201,7 @@ class TradingBot:
             orderbook = None
 
             orderflow_features = {}
+            ticker_data = None  # ← Вынесено выше для доступа в return
 
             if orderbook_resp and orderbook_resp.get("retCode") == 0:
 
@@ -1211,7 +1213,6 @@ class TradingBot:
                 ticker_resp = retry_api_call(
                     self.market_client.get_tickers, self.symbol, category="linear", max_retries=2
                 )
-                ticker_data = None
                 if ticker_resp and ticker_resp.get("retCode") == 0:
                     tickers = ticker_resp.get("result", {}).get("list", [])
                     if tickers:
@@ -1367,6 +1368,8 @@ class TradingBot:
                 "df": df,
 
                 "orderbook": orderbook,
+
+                "ticker_data": ticker_data,  # ← Добавлен для build_features
 
                 "orderflow_features": orderflow_features,
 
@@ -2627,6 +2630,7 @@ class TradingBot:
             df_with_features = self.pipeline.build_features(
                 df_limited,
                 orderbook=data.get("orderbook"),
+                ticker_data=data.get("ticker_data"),  # ← Передан для точного sanity check
                 orderbook_sanity_max_deviation_pct=orderbook_sanity_max_deviation_pct
             )
             

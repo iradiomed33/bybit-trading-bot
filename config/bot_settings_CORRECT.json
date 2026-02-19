@@ -1,0 +1,229 @@
+{
+  "trading": {
+    "symbol": "BTCUSDT",
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "XRPUSDT"
+    ],
+    "mode": "live",
+    "testnet": true,
+    "active_strategies": [
+      "TrendPullback",
+      "Breakout",
+      "MeanReversion",
+      "GridTrading"
+    ]
+  },
+  "market_data": {
+    "kline_interval": "60",
+    "_comment_interval": "Для большей частоты: \"15\" (4x больше входов)",
+    "kline_limit": 500,
+    "max_candles_for_indicators": 200,
+    "orderbook_depth": 50,
+    "data_refresh_interval": 12,
+    "derivatives": {
+      "fetch_mark_price": true,
+      "fetch_index_price": true,
+      "fetch_open_interest": true,
+      "fetch_funding_rate": true
+    },
+    "orderbook_sanity_max_deviation_pct": 35
+  },
+  "risk_management": {
+    "position_risk_percent": 2,
+    "max_leverage": 10,
+    "max_position_size": 0.01,
+    "stop_loss_percent": 2,
+    "take_profit_percent": 4,
+    "daily_loss_limit_percent": 3
+  },
+  "strategies": {
+    "TrendPullback": {
+      "enabled": true,
+      "confidence_threshold": 0.55,
+      "_comment_threshold": "Снижено с 0.65 для большей частоты",
+      "min_candles": 20,
+      "lookback": 30,
+      "_comment": "=== ПАРАМЕТРЫ, КОТОРЫЕ РЕАЛЬНО ЧИТАЮТСЯ ===",
+      "min_adx": 15.0,
+      "pullback_percent": 0.5,
+      "enable_liquidation_filter": true,
+      "liquidation_cooldown_bars": 3,
+      "liquidation_atr_multiplier": 2.5,
+      "liquidation_wick_ratio": 0.7,
+      "liquidation_volume_pctl": 95.0,
+      "entry_mode": "confirm_close",
+      "limit_ttl_bars": 3,
+      "entry_zone_atr_low": -2.5,
+      "entry_zone_atr_high": 2.5,
+      "_comment_entry_zone": "Расширено для testnet (было -1.5/1.5)",
+      "volume_z_threshold": -0.5,
+      "_comment_volume": "Мягче: -0.5 (ниже среднего OK)",
+      "volume_confirmation_mode": "auto"
+    },
+    "Breakout": {
+      "enabled": true,
+      "confidence_threshold": 0.6,
+      "_comment_threshold": "Снижено с 0.7",
+      "min_candles": 10,
+      "_comment": "=== ПАРАМЕТРЫ, КОТОРЫЕ РЕАЛЬНО ЧИТАЮТСЯ ===",
+      "bb_width_threshold": 0.025,
+      "min_volume_zscore": 1.0,
+      "min_atr_percent_expansion": 1.15,
+      "breakout_entry": "instant",
+      "retest_ttl_bars": 3,
+      "require_squeeze": true,
+      "require_expansion": true,
+      "require_volume": true,
+      "_removed": {
+        "lookback": "НЕ ЧИТАЕТСЯ!",
+        "breakout_percent": "НЕ ЧИТАЕТСЯ!"
+      }
+    },
+    "MeanReversion": {
+      "enabled": true,
+      "confidence_threshold": 0.5,
+      "_comment_threshold": "Снижено с 0.6",
+      "min_candles": 15,
+      "_comment": "=== ПАРАМЕТРЫ, КОТОРЫЕ РЕАЛЬНО ЧИТАЮТСЯ ===",
+      "vwap_distance_threshold": 1.5,
+      "rsi_oversold": 30.0,
+      "rsi_overbought": 70.0,
+      "max_adx_for_entry": 35.0,
+      "_comment_adx": "Увеличено с 25 для testnet",
+      "require_range_regime": false,
+      "_comment_regime": "ОТКЛЮЧЕНО для увеличения сигналов",
+      "enable_anti_knife": true,
+      "adx_spike_threshold": 5.0,
+      "atr_spike_threshold": 0.5,
+      "max_hold_bars": 20,
+      "stop_loss_atr_multiplier": 1.0,
+      "_removed": {
+        "lookback": "НЕ ЧИТАЕТСЯ!",
+        "std_dev_threshold": "НЕ ЧИТАЕТСЯ!"
+      }
+    },
+    "GridTrading": {
+      "enabled": true,
+      "confidence_threshold": 0.70,
+      "range_mode": "auto",
+      "range_lookback": 100,
+      "grid_levels": 20,
+      "grid_spacing_percent": 2.0,
+      "_comment": "=== РАССЛАБЛЕННЫЕ ФИЛЬТРЫ ДЛЯ ТЕСТИРОВАНИЯ ===",
+      "require_ranging_market": false,
+      "max_adx_for_range": 40.0,
+      "min_bb_width": 0.01,
+      "max_bb_width": 0.10,
+      "enable_breakout_protection": false,
+      "breakout_volume_threshold": 2.5,
+      "stop_loss_atr_multiplier": 3.0,
+      "profit_per_grid": 1.5,
+      "max_grid_positions": 5,
+      "rebalance_on_drift": true,
+      "drift_threshold_percent": 10.0
+    }
+  },
+  "meta_layer": {
+    "use_mtf": false,
+    "_comment_mtf": "ОТКЛЮЧЕН для избежания rate-limit на testnet",
+    "mtf_score_threshold": 0.5,
+    "use_weighted_routing": true,
+    "strategy_weights": {
+      "TrendPullback": {
+        "base_weight": 1.0,
+        "regime_multipliers": {
+          "trend_up": 1.5,
+          "trend_down": 1.5,
+          "range": 0.5,
+          "high_vol": 0.7,
+          "choppy": 0.3,
+          "unknown": 0.8
+        }
+      },
+      "Breakout": {
+        "base_weight": 1.0,
+        "regime_multipliers": {
+          "trend_up": 0.7,
+          "trend_down": 0.7,
+          "range": 1.5,
+          "high_vol": 0.8,
+          "choppy": 0.4,
+          "unknown": 0.9
+        }
+      },
+      "MeanReversion": {
+        "base_weight": 1.0,
+        "regime_multipliers": {
+          "trend_up": 0.3,
+          "trend_down": 0.3,
+          "range": 1.5,
+          "high_vol": 0.2,
+          "choppy": 0.6,
+          "unknown": 0.7
+        }
+      },
+      "GridTrading": {
+        "base_weight": 1.5,
+        "_comment": "Увеличен базовый вес",
+        "regime_multipliers": {
+          "trend_up": 0.8,
+          "trend_down": 0.8,
+          "range": 2.0,
+          "high_vol": 0.4,
+          "choppy": 1.5,
+          "unknown": 0.5
+        }
+      }
+    },
+    "confidence_scaling": {
+      "enabled": true,
+      "TrendPullback": {
+        "multiplier": 1.0,
+        "offset": 0.0
+      },
+      "Breakout": {
+        "multiplier": 1.0,
+        "offset": 0.0
+      },
+      "MeanReversion": {
+        "multiplier": 0.9,
+        "offset": 0.0
+      },
+      "GridTrading": {
+        "multiplier": 1.0,
+        "offset": 0.0
+      }
+    },
+    "regime_scorer": {
+      "adx_trend_min": 25.0,
+      "adx_trend_max": 50.0,
+      "adx_range_max": 20.0,
+      "bb_width_range_max": 0.03,
+      "atr_pct_high": 3.0,
+      "atr_pct_extreme": 7.0
+    }
+  },
+  "no_trade_zone": {
+    "_comment": "Расслабленные лимиты для testnet (глючный orderbook/высокая вола)",
+    "max_atr_pct": 80,
+    "max_spread_pct": 8.0
+  },
+  "execution": {
+    "order_type": "limit",
+    "_comment_post_only": "ОТКЛЮЧЕН для увеличения fills",
+    "post_only": false,
+    "order_timeout_seconds": 120,
+    "_comment_timeout": "Уменьшен до 2 минут",
+    "max_retries": 2,
+    "cancel_on_reject": true
+  },
+  "observability": {
+    "enable_signal_logging": true,
+    "log_rejected_signals": true,
+    "log_volume_confirmation": true,
+    "log_liquidation_checks": true
+  }
+}
