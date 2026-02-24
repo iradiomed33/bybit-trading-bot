@@ -328,11 +328,14 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 if volume_passed:
 
-                    # 4. Структура: не в аномалии
+                    # 4. Структура: не в аномалии (с учётом testnet)
 
                     has_anomaly = latest.get("has_anomaly", 0)
-
-                    anomaly_passed = has_anomaly == 0
+                    is_testnet = bool(features.get("is_testnet", False))
+                    allow_anomaly = bool(features.get("allow_anomaly_on_testnet", False))
+                    
+                    # Пропускаем аномалии на testnet если allow_anomaly_on_testnet=true
+                    anomaly_passed = (has_anomaly == 0) or (is_testnet and allow_anomaly)
 
                     signal_logger.log_filter_check(
 
@@ -344,7 +347,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                         value=has_anomaly,
 
-                        threshold="0 (no anomaly)",
+                        threshold="0 (no anomaly)" if not (is_testnet and allow_anomaly) else "0 or allowed on testnet",
 
                     )
 
@@ -544,9 +547,13 @@ class TrendPullbackStrategy(BaseStrategy):
 
                 if volume_passed:
 
+                    # Структура: не в аномалии (с учётом testnet)
                     has_anomaly = latest.get("has_anomaly", 0)
-
-                    anomaly_passed = has_anomaly == 0
+                    is_testnet = bool(features.get("is_testnet", False))
+                    allow_anomaly = bool(features.get("allow_anomaly_on_testnet", False))
+                    
+                    # Пропускаем аномалии на testnet если allow_anomaly_on_testnet=true
+                    anomaly_passed = (has_anomaly == 0) or (is_testnet and allow_anomaly)
 
                     signal_logger.log_filter_check(
 
@@ -558,7 +565,7 @@ class TrendPullbackStrategy(BaseStrategy):
 
                         value=has_anomaly,
 
-                        threshold="0 (no anomaly)",
+                        threshold="0 (no anomaly)" if not (is_testnet and allow_anomaly) else "0 or allowed on testnet",
 
                     )
 
